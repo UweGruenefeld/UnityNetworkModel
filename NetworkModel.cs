@@ -7,7 +7,7 @@
  *
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
- * @version 2017-05-05
+ * @version 2017-05-06
  **/
 ﻿using System;
 using System.Collections.Generic;
@@ -15,10 +15,6 @@ using WebSocketSharp;
 
 namespace UnityEngine
 {
-	/*
-	 * TODO sync more then only transform
-	 * TODO allow to remove objects
-	 */
 	public class NetworkModel : MonoBehaviour
 	{
 		[Header("Server properties")]
@@ -27,13 +23,17 @@ namespace UnityEngine
 
 		// Private variables
 		// TODO ConcurrentStack to make the queue thread-safe
-		private Stack<_Wrapper> updateList;
+		private Dictionary<string, GameObject> objectMap;
+		private Stack<_Request> requestStack;
 		private WebSocket webSocket;
+		private bool init;
 
 		void Start ()
 		{
-			// Initialize update list
-			this.updateList = new Stack<_Wrapper>();
+			// Initialize object map and update list
+			this.objectMap = new Dictionary<string, GameObject>();
+			this.requestStack = new Stack<_Request>();
+			this.init = true;
 		}
 
 		void Update ()
@@ -52,12 +52,12 @@ namespace UnityEngine
 					this.webSocket.Connect ();
 
 					// Method for handling incoming messages
-					this.webSocket.OnMessage += (sender, message) => this.PullRequest (message.Data);
+					this.webSocket.OnMessage += (sender, message) => this.Response (message.Data);
 				}
 				// Could not connect to server
-				catch(Exception exception) {
-					//Debug.LogError (exception);
-				}
+				#pragma warning disable 0168
+				catch(Exception exception) {}
+				#pragma warning restore 0168
 			}
 
 			// If the websocket still is not alive
@@ -66,64 +66,111 @@ namespace UnityEngine
 
 			// Get all children gameobjects of the gameobject
 			// with this script attached to
-			foreach (Transform child in this.gameObject.transform)
+			foreach (Transform transform in this.gameObject.transform)
 			{
 				// Check if there was an update on the gameobject
-				if (child.transform.hasChanged)
+				if (transform.hasChanged)
 				{
-					//Debug.Log ("Child gameobject has changed");
-					this.PushRequest(child.gameObject);
-					child.transform.hasChanged = false;
-				}
-			}
+					// GameObject has changed
+					if (!this.objectMap.ContainsKey (transform.gameObject.name))
+						this.objectMap.Add (transform.gameObject.name, transform.gameObject);
 
-			// Update and create all gameobjects in list
-			while (this.updateList.Count > 0)
-			{
-				_Wrapper wrapper = this.updateList.Pop ();
-
-				Transform transform = this.gameObject.transform.Find(wrapper.n);
-
-				// If object is not existing
-				if (transform == null)
-				{
-					//TODO create object
-				}
-				// If object is existing
-				else {
-					transform.localPosition = wrapper.v.p;
-					transform.localRotation = wrapper.v.r;
-					transform.localScale = wrapper.v.s;
-
-					// Avoid triggering update of changes
+					if(this.init)
+						this.RequestInsert(transform.gameObject);
+					else
+						this.RequestUpdate(transform.gameObject);
+						
 					transform.hasChanged = false;
 				}
 			}
+
+			// Handle requests from server
+			// update or delete gameobjects from stack
+			while (this.requestStack.Count > 0)
+			{
+				_Request request = this.requestStack.Pop ();
+
+				switch (request.t) 
+				{
+					case _Request.DELETE:
+						if (this.objectMap.ContainsKey (request.id))
+							Destroy (this.objectMap [request.id]);
+						break;
+					case _Request.INSERT:
+					case _Request.UPDATE:
+						GameObject gameObject;
+						if (!this.objectMap.ContainsKey (request.id)) {
+							gameObject = GameObject.CreatePrimitive (PrimitiveType.Cube).transform.gameObject;
+							gameObject.transform.SetParent (this.gameObject.transform);
+							gameObject.name = request.id;
+							this.objectMap.Add (request.id, gameObject);
+						} else
+							gameObject = this.objectMap [request.id];
+
+						gameObject.transform.localPosition = request.o.p;
+						gameObject.transform.localRotation = request.o.r;
+						gameObject.transform.localScale = request.o.s;
+
+							// Avoid triggering update of changes
+						gameObject.transform.hasChanged = false;
+						break;
+				}
+			}
+
+			// Remove not existing objects
+			List<string> removeList = new List<string>();  
+			foreach (KeyValuePair<string, GameObject> entry in this.objectMap) 
+			{
+				// If object is not existing remove from map and server
+				if (entry.Value == null || entry.Key != entry.Value.name)
+					removeList.Add (entry.Key);
+			}
+			foreach (string entry in removeList) 
+			{
+				this.RequestDelete (entry);
+				this.objectMap.Remove (entry);
+			}
+
+			this.init = false;
 		}
 
-		private void PushRequest(GameObject gameObject)
+		private void RequestDelete(string entry)
 		{
-			this.webSocket.Send (JsonUtility.ToJson(new _Wrapper(gameObject)));
+			this.webSocket.Send (JsonUtility.ToJson(new _Request(entry, _Request.DELETE, null)));
 		}
 
-		private void PullRequest(string json)
+		private void RequestInsert(GameObject gameObject)
 		{
-			this.updateList.Push (JsonUtility.FromJson<_Wrapper> (json));
+			this.webSocket.Send (JsonUtility.ToJson(new _Request(gameObject.name, _Request.INSERT, gameObject)));
+		}
+
+		private void RequestUpdate(GameObject gameObject)
+		{
+			this.webSocket.Send (JsonUtility.ToJson(new _Request(gameObject.name, _Request.UPDATE, gameObject)));
+		}
+
+		private void Response(string json)
+		{
+			this.requestStack.Push (JsonUtility.FromJson<_Request>(json));
 		}
 	}
-
+		
 	[Serializable]
-	class _Wrapper
+	class _Request
 	{
-		public string n;
-		public _GameObject v;
+		public const string DELETE = "d";
+		public const string INSERT = "i";
+		public const string UPDATE = "u";
 
-		public _Wrapper(GameObject gameObject)
+		public string id;
+		public string t; 
+		public _GameObject o;
+
+		public _Request(string id, string t, GameObject o) 
 		{
-			this.n = gameObject.ToString ();
-			this.n = this.n.Substring (0, this.n.Length - 25);
-
-			this.v = new _GameObject (gameObject);
+			this.id = id;
+			this.t = t;
+			this.o = new _GameObject(o);
 		}
 	}
 
@@ -135,6 +182,9 @@ namespace UnityEngine
 
 		public _GameObject(GameObject gameObject)
 		{
+			if (gameObject == null)
+				return;
+			
 			this.p = gameObject.transform.localPosition;
 			this.s = gameObject.transform.localScale;
 

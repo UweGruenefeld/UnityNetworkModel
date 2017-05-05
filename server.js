@@ -5,7 +5,7 @@
  *
  * @file server.js
  * @author Uwe Gruenefeld
- * @version 2017-05-05
+ * @version 2017-05-06
  **/
 
 var config		= require('./config.json');
@@ -16,36 +16,68 @@ var server		= websocket.createServer(function(connection)
 {
 	console.log("New socket connection");
 
-	// Handle event for incoming data
-	connection.on('text', function(text)
+	// Send model to new client
+	Object.keys(model).forEach(function(key)
 	{
-		try {
-			json = JSON.parse(text);
+		connection.sendText(JSON.stringify({ id: key, t: 'i', o: model[key]}));
+	});
 
-			// If there is a value attribute in the json
-			// update or insert value and name in model
-			if(json.hasOwnProperty('v'))
+	// Handle event for incoming text
+	connection.on("text", function(message)
+	{
+		try
+		{
+			console.log(message);
+			json = JSON.parse(message);
+
+			// Validate request
+			if(json.hasOwnProperty('id') && json.hasOwnProperty('t'))
 			{
-				// Update or insert value and name in model
-				model[json.n] = json.v;
+				switch (json.t)
+				{
+					// If it is a delete request
+					case 'd':
+						// Send delete to all connected sockets
+						server.connections.forEach(function (socket) {
+							socket.sendText(JSON.stringify(json));
+						});
+						delete model[json.id];
+						break;
 
-				// Send value to all connected sockets
-				server.connections.forEach(function (socket) {
-		        socket.sendText(JSON.stringify(json));
-		    });
+					// If it is a insert request
+					case 'i':
+						if(model.hasOwnProperty(json.id))
+						{
+							json.t = 'u';
+							json.o = model[json.id];
+							connection.sendText(JSON.stringify(json));
+							break;
+						}
+
+					// If it is a update request
+					case 'u':
+						model[json.id] = json.o;
+						json.t = 'u';
+
+						// Send value to all connected sockets
+						server.connections.forEach(function (socket) {
+							socket.sendText(JSON.stringify(json));
+						});
+				}
 			}
-			// If there is no value attribute in the json
-			// return value for name to the requesting socket
-			else
-				connection.sendText(JSON.stringify({ n: json.n, v: model[json.n]}));
-
 		} catch(exception) {
-			console.log("Only JSON support")
+			console.log("Data format needs to be JSON")
 		}
+	});
+
+	// Handle event for close connection
+	connection.on("close", function()
+	{
+		console.log("Socket connection closed");
 	});
 });
 
-server.listen(config.port)
+server.listen(config.port);
 
 // Return a status message to console
 console.log('Server is running at ws://localhost:' + config.port + '/');
