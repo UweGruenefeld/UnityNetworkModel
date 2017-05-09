@@ -22,3 +22,10 @@ To install the UnityNetworkModel follow these steps:
 3. Start node.js server with node *server.js*
 4. Copy NetworkModel.cs and websocket-sharp.dll into Unity
 5. Add the script NetworkModel.cs as Component to a GameObject
+
+## Features
+* Bi-directional updates over server with any number of clients
+* Synchronizes any hierarchy depth of GameObjects
+* Easy extendable to support more components
+* Update time interval is adjustable
+* Enables to specify which attribute to sync 
