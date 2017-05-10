@@ -7,10 +7,11 @@
  *
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
- * @version 2017-05-09
+ * @version 2017-05-11
  **/
 ﻿using System;
 using System.Collections.Generic;
+using System.Reflection;
 using WebSocketSharp;
 
 namespace UnityEngine
@@ -20,27 +21,43 @@ namespace UnityEngine
 	/// </summary>
 	public class NetworkModel : MonoBehaviour
 	{
+		[HeaderAttribute("Debugging")]
+		public bool DEBUGGING = false;
+
 		[HeaderAttribute("Connection")]
 		public string IP = "127.0.0.1";
 		public int PORT = 8080;
 
+		[HeaderAttribute("Update")]
+		public bool CLIENT = true;
+		public bool SERVER = true;
+
 		[HeaderAttribute("Update period in seconds")]
 		[Range(0.0f, 10.0f)]
-		public float PERIOD = 0.1f;
+		public float PERIOD = 0f;
+
+		[HeaderAttribute("Update with timestamp")]
+		public bool TIMESTAMP = false;
+
+		[HeaderAttribute("Update components")]
+		public bool TRANSFORM = true;
+		public bool CAMERA = true;
+		public bool LIGHT = true;
+		public bool MESHFILTER = true;
+		public bool MESHRENDERER = true;
 
 		// Variables for websocket connection
 		private WebSocket webSocket;
-		private bool init;
 
 		// Variable for update interval
 		private float time;
 
 		// Variables for gameobject synchronization
-		private Dictionary<string, GameObject> objectDictionary;
+		private Dictionary<string, Node> nodeDictionary;
 		private Queue<_Request> requestQueue;	// FIX ConcurrentQueue to make the queue thread-safe
 
 		// Variables for hierarchy synchronization
-		private Queue<Hierarchy> hierarchyQueue;
+		private Queue<HierarchyUpdate> hierarchyQueue;
 
 		/// <summary>
 		/// Initialize all default attributes 
@@ -48,15 +65,14 @@ namespace UnityEngine
 		void Start ()
 		{
 			// Default values
-			this.init = true;
 			this.time = 0f;
 
 			// Initialize object synchronization
-			this.objectDictionary = new Dictionary<string, GameObject>();
+			this.nodeDictionary = new Dictionary<string, Node>();
 			this.requestQueue = new Queue<_Request>();
 
 			// Initialize hierarchy synchronization
-			this.hierarchyQueue = new Queue<Hierarchy> ();
+			this.hierarchyQueue = new Queue<HierarchyUpdate> ();
 		}
 
 		/// <summary>
@@ -72,14 +88,12 @@ namespace UnityEngine
 			if (!this.ProcessConnection ())
 				return;
 
-			// Process
-			this.ProcessRequests ();
-			this.ProcessHierarchy ();
-			this.ProcessChanges ();
-			this.ProcessGarbage ();
+			// Changes
+			this.ProcessServerChanges ();
+			this.ProcessClientChanges ();
 
-			// Initial update run is done
-			this.init = false;
+			// Garbage
+			this.ProcessGarbage ();
 		}
 
 		/// <summary>
@@ -136,104 +150,103 @@ namespace UnityEngine
 		/// <summary>
 		/// Process the request from server
 		/// </summary>
-		private void ProcessRequests()
+		private void ProcessServerChanges()
 		{
-			// Handle requests from server in specific order
-			string[] order = new string[]{_Request.DELETE_OBJECT, _Request.INSERT_OBJECT, _Request.UPDATE_OBJECT};
-
-			// Run through request once per type of request
-			for (int i = 0; i < order.Length; i++)
-				// Run through all requests
-				for (int j = 0; j < this.requestQueue.Count; j++) 
-				{
-					// Get next Request
-					_Request request = this.requestQueue.Dequeue ();
-					// If request do not fit order put it back in queue
-					if (request.t != order[i]) {
-						this.requestQueue.Enqueue (request);
-						continue;
-					}
-
-					// Process request
-					switch (request.t) 
-					{
-					case _Request.DELETE_OBJECT:
-						if (this.objectDictionary.ContainsKey (request.id)) 
-						{
-							Destroy (this.objectDictionary [request.id]);
-							this.objectDictionary.Remove (request.id);
-						}
-						break;
-					case _Request.INSERT_OBJECT:
-					case _Request.UPDATE_OBJECT:
-						SynchronizeGameObject (request);
-						break;
-					}
-				}
-		}
-
-		/// <summary>
-		/// Process the hierarchy changes
-		/// </summary>
-		private void ProcessHierarchy()
-		{
-			// List of gameobjects that need an hierarchy update 
-			for (int i = 0; i < this.hierarchyQueue.Count; i++) 
+			// Handle requests from server
+			for (int j = 0; j < this.requestQueue.Count; j++) 
 			{
-				// Get first request
-				Hierarchy hierarchy = this.hierarchyQueue.Dequeue ();
+				// Get next Request
+				_Request request = this.requestQueue.Dequeue ();
 
-				// Check for parent
-				Transform parent = null;
-				if (hierarchy.parent == "root")
-					parent = this.transform;
-				else if (this.objectDictionary.ContainsKey (hierarchy.parent))
-					parent = this.objectDictionary [hierarchy.parent].transform;
-
-				// If parent is not null update otherwise put request back in queue
-				if (parent != null) 
+				// Process request
+				switch (request.type) 
 				{
-					hierarchy.gameObject.transform.parent = parent;
-					hierarchy.gameObject.SetActive (true);
-					hierarchy.gameObject.transform.hasChanged = false;
+					case _Request.DELETE:
+						if (request.parameter == "")
+							DeleteGameObject (request.id);
+						else
+							DeleteComponent (request.id, request.parameter);
+						break;
+					case _Request.INSERT:
+					case _Request.UPDATE:
+						this.SynchronizeGameObject (request);
+						break;
 				}
-				else
-					this.hierarchyQueue.Enqueue (hierarchy);
 			}
+			this.SynchronizeHierarchy ();
 		}
 
 		/// <summary>
 		/// Process the gameobject changes
 		/// </summary>
-		private void ProcessChanges()
+		private void ProcessClientChanges()
 		{
-			// TODO Syncronize if a single component is changed
-
-			// Process changes for the game object itself
-			foreach (Transform transform in this.gameObject.GetComponentsInChildren<Transform>())
+			// Run through all child gameobjects from root gameobject
+			foreach (Transform transform in this.gameObject.GetComponentsInChildren<Transform>()) 
 			{
-				// Check if there was an update on the gameobject
-				if (transform.hasChanged && transform != this.gameObject.transform)
+				// Check if given transform is not from root
+				if (transform != this.gameObject.transform) 
 				{
-					// GameObject has changed
-					if (!this.objectDictionary.ContainsKey (transform.gameObject.name))
-						this.objectDictionary.Add (transform.gameObject.name, transform.gameObject);
-					else 
+					// Check if given transform is not in nodeDictionary
+					if (!this.nodeDictionary.ContainsKey (transform.gameObject.name)) 
 					{
-						// Is name already used?
-						if (this.objectDictionary [transform.gameObject.name].GetInstanceID() != transform.gameObject.GetInstanceID ()) 
+						this.nodeDictionary.Add (transform.gameObject.name, new Node (transform.gameObject));
+						this.Request (new _Request (transform.gameObject, _Request.INSERT, this));
+						transform.hasChanged = false;
+						continue;
+					} 
+					// Check if given transform is in nodeDictionary as different node
+					else if (this.nodeDictionary [transform.gameObject.name].gameObject.GetInstanceID () != transform.gameObject.GetInstanceID ()) 
+					{
+						transform.gameObject.name = "RENAMED_" + transform.gameObject.GetInstanceID ().ToString ();
+						this.nodeDictionary.Add (transform.gameObject.name, new Node (transform.gameObject));
+						this.Request (new _Request (transform.gameObject, _Request.INSERT, this));
+						transform.hasChanged = false;
+						continue;
+					}
+
+					// Get node and add new components
+					Node node = this.nodeDictionary [transform.gameObject.name];
+					node.AddMissingComponents();
+
+					// Save updated components
+					List<_Component> updatedComponents = new List<_Component>();
+
+					// Update existing components
+					foreach (KeyValuePair<Type, string> entry in node.componentDictionary) 
+					{
+						Component component = transform.gameObject.GetComponent (entry.Key);
+						Type type = Util.TypeToSerializableType (component.GetType ());
+
+						// Component is not existing anymore
+						if (component == null) 
 						{
-							transform.gameObject.name = "RENAMED_" + transform.gameObject.GetInstanceID ().ToString();
-							this.objectDictionary.Add (transform.gameObject.name, transform.gameObject);
+							// Send delete to server
+							this.Request(new _Request(transform.gameObject.name, _Request.DELETE, type.ToString(), this));
+						} 
+						else 
+						{
+							// Update the component
+							string hash = Util.Convert(component).GetHash ();
+							if (hash != entry.Value) {
+								updatedComponents.Add (Util.Convert(component));
+							}
 						}
 					}
 
-					if(this.init)
-						this.Request(new _Request(transform.gameObject, _Request.INSERT_OBJECT, this.gameObject.name));
-					else
-						this.Request(new _Request(transform.gameObject, _Request.UPDATE_OBJECT, this.gameObject.name));
+					// Update all hashes for components
+					node.UpdateHashes ();
 
-					transform.hasChanged = false;
+					// Update only if components changed
+					if (transform.hasChanged || updatedComponents.Count > 0) 
+					{
+						// Create request
+						_Request _request = new _Request (transform.gameObject.name, _Request.UPDATE, "", this);
+						_request.parameter = transform.parent.name;
+						_request.components = updatedComponents;
+						this.Request (_request);
+						transform.hasChanged = false;
+					}
 				}
 			}
 		}
@@ -245,16 +258,16 @@ namespace UnityEngine
 		{
 			// Remove not existing objects
 			List<string> removeList = new List<string>();  
-			foreach (KeyValuePair<string, GameObject> entry in this.objectDictionary) 
+			foreach (KeyValuePair<string, Node> entry in this.nodeDictionary) 
 			{
 				// If object is not existing remove from map and server
-				if (entry.Value == null || entry.Key != entry.Value.name) 
+				if (entry.Value == null || entry.Value.gameObject == null || entry.Key != (entry.Value.gameObject.name)) 
 					removeList.Add (entry.Key);
 			}
 			foreach (string entry in removeList) 
 			{
-				this.Request (new _Request(entry, _Request.DELETE_OBJECT, ""));
-				this.objectDictionary.Remove (entry);
+				this.Request (new _Request(entry, _Request.DELETE, "", this));
+				this.nodeDictionary.Remove (entry);
 			}
 		}
 
@@ -265,147 +278,213 @@ namespace UnityEngine
 		/// <param name="_request">Request from server</param>
 		private void SynchronizeGameObject(_Request _request)
 		{
-			GameObject gameObject = this.ReferenceToGameObject(_request);
+			Node node = this.ReferenceToGameObject(_request);
 
 			// Update the components
-			foreach (_Component component in _request.components) 
+			foreach (_Component _component in _request.components) 
 			{
-				if (component.GetType () == typeof(_Transform)) 
-				{
-					_Transform _transform = (_Transform)component;
-					Transform transform = this.ReferenceToComponent<Transform> (gameObject);
+				Component component = this.ReferenceToComponent (node.gameObject, Util.SerializableTypeToType(_component.GetType()));
+				_component.Apply(component);
+			}
 
-					// If there was no change on client side than use server values
-					if (!transform.hasChanged) {
-						transform.localPosition = _transform.p;
-						transform.localRotation = _transform.r;
-						transform.localScale = _transform.s;
+			// Add hashes for new added components
+			node.UpdateHashes ();
+		}
 
-						// Avoid triggering update of changes
-						transform.hasChanged = false;
-					}
-				} 
-				else if (component.GetType () == typeof(_Camera)) 
-				{
-					_Camera _camera = (_Camera)component;
-					Camera camera = this.ReferenceToComponent<Camera> (gameObject);
+		/// <summary>
+		/// Synchronizes the hierarchy for gameobjects from hierarchy queue
+		/// </summary>
+		private void SynchronizeHierarchy()
+		{
+			// List of gameobjects that need an hierarchy update 
+			for (int i = 0; i < this.hierarchyQueue.Count; i++) 
+			{
+				// Get first request
+				HierarchyUpdate hierarchyUpdate = this.hierarchyQueue.Dequeue ();
 
-					camera.depth = _camera.d;
-					camera.nearClipPlane = _camera.n;
-					camera.farClipPlane = _camera.f;
-					camera.fieldOfView = _camera.v;
-				} 
-				else if (component.GetType () == typeof(_Light)) 
-				{
-					_Light _light = (_Light)component;
-					Light light = this.ReferenceToComponent<Light> (gameObject);
+				// Check for parent
+				Transform parent = null;
+				if (hierarchyUpdate.parent == "root")
+					parent = this.transform;
+				else if (this.nodeDictionary.ContainsKey (hierarchyUpdate.parent))
+					parent = this.nodeDictionary [hierarchyUpdate.parent].gameObject.transform;
 
-					light.type = _light.t;
-					light.color = _light.c;
-					light.intensity = _light.i;
-					light.bounceIntensity = _light.b;
-				} 
-				else if (component.GetType () == typeof(_MeshFilter)) 
+				// If parent is not null update otherwise put request back in queue
+				if (parent != null) 
 				{
-					_MeshFilter _meshFilter = (_MeshFilter)component;
-					MeshFilter meshFilter = this.ReferenceToComponent<MeshFilter> (gameObject);
+					hierarchyUpdate.gameObject.transform.parent = parent;
+					hierarchyUpdate.gameObject.SetActive (true);
+					hierarchyUpdate.gameObject.transform.hasChanged = false;
+				}
+				else
+					this.hierarchyQueue.Enqueue (hierarchyUpdate);
+			}
+		}
 
-					meshFilter.mesh = new Mesh ();
-					meshFilter.mesh.vertices = _meshFilter.v;
-					meshFilter.mesh.uv = _meshFilter.u;
-					meshFilter.mesh.triangles = _meshFilter.t;
-				} 
-				else if (component.GetType () == typeof(_MeshRenderer)) 
+		private void DeleteGameObject(string gameObject)
+		{
+			if (this.nodeDictionary.ContainsKey (gameObject)) 
+			{
+				Destroy (this.nodeDictionary [gameObject].gameObject);
+				this.nodeDictionary.Remove (gameObject);
+			}
+		}
+
+		private void DeleteComponent(string gameObject, string component)
+		{
+			if (this.nodeDictionary.ContainsKey (gameObject)) 
+			{
+				GameObject obj = this.nodeDictionary [gameObject].gameObject;
+				Type type = Type.GetType (component + ", UnityEngine");
+				if (type != null) 
 				{
-					#pragma warning disable CS0219
-					_MeshRenderer _meshRenderer = (_MeshRenderer)component;
-					MeshRenderer meshRenderer = this.ReferenceToComponent<MeshRenderer> (gameObject);
-					#pragma warning restore CS0219
+					Component comp = obj.GetComponent(type);
+					Destroy (comp);
 				}
 			}
 		}
 
 		// Finds or creates a reference to gameobject specified in request
-		private GameObject ReferenceToGameObject(_Request _request)
+		private Node ReferenceToGameObject(_Request _request)
 		{
-			GameObject gameObject;
-
-			if (!this.objectDictionary.ContainsKey (_request.id)) 
+			Node node;	
+			if (!this.nodeDictionary.ContainsKey (_request.id)) 
 			{
-				gameObject = new GameObject ();
+				GameObject gameObject = new GameObject ();
 				gameObject.name = _request.id;
 				gameObject.transform.hasChanged = false;
-				gameObject.SetActive (false);
-				this.hierarchyQueue.Enqueue (new Hierarchy (gameObject, _request.p));
-				this.objectDictionary.Add (_request.id, gameObject);
+				gameObject.SetActive(false);
+				node = new Node (gameObject);
+				this.hierarchyQueue.Enqueue (new HierarchyUpdate (gameObject, _request.parameter));
+				this.nodeDictionary.Add (_request.id, node);
 			} 
 			else 
 			{
-				gameObject = this.objectDictionary [_request.id];
-				if (gameObject.transform.parent.name != _request.p) 
+				node = this.nodeDictionary [_request.id];
+				if (node.gameObject.transform.parent.name != _request.parameter) 
 				{
-					gameObject.SetActive (false);
-					this.hierarchyQueue.Enqueue (new Hierarchy (gameObject, _request.p));
+					node.gameObject.SetActive (false);
+					this.hierarchyQueue.Enqueue (new HierarchyUpdate (node.gameObject, _request.parameter));
 				}
 			}
 				
-			return gameObject;
+			return node;
 		}
 
 		// Finds or creates a reference to component specified by T and gameobject
-		private T ReferenceToComponent<T>(GameObject gameObject) where T : Component 
+		private Component ReferenceToComponent(GameObject gameObject, Type type) 
 		{
-			T component = gameObject.GetComponent<T>();
+			Component component = gameObject.GetComponent(type);
 			if (component != null)
 				return component;
 
-			component = (T)gameObject.AddComponent (typeof(T));
+			component = gameObject.AddComponent (type);
 			return component;
 		}
 
 		// Sending a request
 		private void Request(_Request _request)
-		{			
-			this.webSocket.Send (JsonUtility.ToJson (_request));
+		{
+			if (this.SERVER) {
+				if (_request.parameter == this.gameObject.name)
+					_request.parameter = "root";
+				string json = JsonUtility.ToJson (_request);
+				if(this.DEBUGGING)
+					Debug.Log ("Sent: " + json);
+				this.webSocket.Send (json);
+			}
 		}
 
 		// Handling a response
 		private void Response(string json)
 		{
-			this.requestQueue.Enqueue (JsonUtility.FromJson<_Request> (json));
+			if (this.CLIENT) {
+				if(this.DEBUGGING)
+					Debug.Log ("Recieved: " + json);
+				this.requestQueue.Enqueue (JsonUtility.FromJson<_Request> (json));
+			}
 		}
 	}
-
-
+		
 	/// <summary>
-	/// Serialization Utils
+	/// Utils
 	/// </summary>
 	/// <param name="obj">Object.</param>
 	/// <typeparam name="T">The 1st type parameter.</typeparam>
 	static class Util
 	{
-		public static string Serialize<T>(T obj)
+		public static long Timestamp()
 		{
-			return obj.GetType () + ":" + JsonUtility.ToJson (obj);
+			return DateTime.Now.ToUniversalTime().ToBinary();
 		}
 
-		public static T Deserialize<T>(string json)
+		public static Type TypeToSerializableType(Type type)
 		{
-			int delimiter = json.IndexOf (":");
-			Type type = Type.GetType (json.Substring (0, delimiter));
-			return (T)JsonUtility.FromJson (json.Substring (delimiter + 1), type);
+			return Type.GetType("UnityEngine._" + type.Name);
+		}
+
+		public static Type SerializableTypeToType(Type type)
+		{
+			return Type.GetType("UnityEngine." + type.Name.Substring(1) + ", UnityEngine");
+		}
+
+		public static _Component Convert(Component component)
+		{
+			Type componentType = Util.TypeToSerializableType (component.GetType ());
+			if (componentType != null)
+				return (_Component)Activator.CreateInstance (componentType, new Object[]{ component });
+			return null;
+		}
+	}
+
+	/// <summary>
+	/// Internal representation of gameobjects
+	/// </summary>
+	class Node
+	{
+		public GameObject gameObject;
+		public Dictionary<Type, string> componentDictionary;
+
+		public Node(GameObject gameObject)
+		{
+			this.gameObject = gameObject;
+			this.UpdateHashes ();
+		}
+
+		public void UpdateHashes()
+		{
+			this.componentDictionary = new Dictionary<Type, string>();
+
+			foreach (Component component in this.gameObject.GetComponents(typeof(Component))) 
+			{
+				Type type = Util.TypeToSerializableType(component.GetType ());
+
+				if(type != null)
+					this.componentDictionary.Add(component.GetType(), Util.Convert(component).GetHash());
+			}
+		}
+
+		public void AddMissingComponents()
+		{
+			foreach (Component component in this.gameObject.GetComponents(typeof(Component))) 
+			{
+				Type type = Util.TypeToSerializableType(component.GetType ());
+
+				if (type != null && !this.componentDictionary.ContainsKey(component.GetType()))
+					this.componentDictionary.Add(component.GetType(), "");
+			}
 		}
 	}
 
 	/// <summary>
 	/// Struct for a hierarchy change 
 	/// </summary>
-	struct Hierarchy
+	struct HierarchyUpdate
 	{
 		public GameObject gameObject;
 		public string parent;
 
-		public Hierarchy(GameObject gameObject, string parent)
+		public HierarchyUpdate(GameObject gameObject, string parent)
 		{
 			this.gameObject = gameObject;
 			this.parent = parent;
@@ -418,64 +497,89 @@ namespace UnityEngine
 	[Serializable]
 	class _Request : ISerializationCallbackReceiver
 	{
-		public const string DELETE_OBJECT = "d";
-		public const string INSERT_OBJECT = "i";
-		public const string UPDATE_OBJECT = "u";
+		public const string DELETE = "d";
+		public const string INSERT = "i";
+		public const string UPDATE = "u";
 
 		public string id;
-		public string t; 
-		public string p;
+		public string type; 
+		public string parameter;
 
-		public List<string> c;
+		public long timestamp;
+
+		public List<string> componentNames;
+		public List<string> componentValues;
 
 		[NonSerialized]
 		public List<_Component> components;
 
-		public _Request(string id, string t, string p) 
+		public _Request(string id, string type, string parameter, NetworkModel root) 
 		{
 			this.id = id;
-			this.t = t;
-			this.p = p;
+			this.type = type;
+			this.parameter = parameter;
+
+			this.timestamp = 0;
+			if(root.TIMESTAMP)
+				this.timestamp = Util.Timestamp ();
 
 			this.components = new List<_Component> ();
 		}
 
-		public _Request(GameObject gameObject, string t, string root) 
+		public _Request(GameObject gameObject, string type, NetworkModel root) 
 		{
 			this.id = gameObject.name;
-			this.t = t;
-			this.p = gameObject.transform.parent.name;
+			this.type = type;
+			this.parameter = gameObject.transform.parent.name;
 
-			if (this.p == root)
-				this.p = "root";
+			this.timestamp = 0;
+			if(root.TIMESTAMP)
+				this.timestamp = Util.Timestamp ();
 
 			this.components = new List<_Component> ();
 
-			// Save supported components of gameobject
-			Component[] list = gameObject.GetComponents(typeof(Component));
-			foreach (Component component in list) 
-			{
-				Type type = Type.GetType("UnityEngine._" + component.GetType ().Name);
-
-				if (type != null) 
-					this.components.Add((_Component)Activator.CreateInstance(type, new Object[]{component}));
+			// Save supported and enabled components of gameobject
+			foreach (Component component in gameObject.GetComponents(typeof(Component))) {
+				// Check if public variable is existing for component
+				#pragma warning disable CS0168 
+				if(Util.TypeToSerializableType (component.GetType ()) != null)
+				{
+					try
+					{
+						if ((bool)typeof(NetworkModel).GetField(component.GetType ().Name.ToUpper()).GetValue(root)) 
+							this.components.Add(Util.Convert(component));
+					}
+					catch(Exception exc)
+					{
+						Debug.LogWarning("Serializable class for " + component + "exists but no public bool variable to enable/disbale it.");
+						this.components.Add(Util.Convert(component));
+					}
+				}
+				#pragma warning restore CS0168
 			}
 		}
 
 		public void OnBeforeSerialize()
 		{
-			this.c = new List<string> ();
+			this.componentNames = new List<string> ();
+			this.componentValues = new List<string> ();
 
 			foreach (_Component component in this.components) 
-				this.c.Add (Util.Serialize<_Component>(component));
+			{
+				this.componentNames.Add (component.GetType ().ToString());
+				this.componentValues.Add (JsonUtility.ToJson(component));
+			}
 		}
 
 		public void OnAfterDeserialize()
 		{
 			this.components = new List<_Component> ();
 
-			foreach (string s in this.c) 
-				this.components.Add(Util.Deserialize<_Component>(s));
+			for (int i = 0; i < this.componentNames.Count && i < this.componentValues.Count; i++) 
+			{
+				Type type = Type.GetType (this.componentNames[i]);
+				this.components.Add((_Component)JsonUtility.FromJson (this.componentValues[i], type));
+			}
 		}
 	}
 
@@ -484,9 +588,22 @@ namespace UnityEngine
 	/// </summary>
 	/// <param name="component">Component.</param>
 	[Serializable]
-	class _Component 
+	abstract class _Component 
 	{
 		public _Component(Component component) {}
+
+		abstract public void Apply(Component component);
+
+		public string GetHash()
+		{
+			string hash = "";
+			FieldInfo[] fields = this.GetType().GetFields();
+			foreach(FieldInfo field in fields)
+			{
+				hash += field.GetValue(this).ToString() + ":";
+			}
+			return hash;
+		}
 	}
 
 	/// <summary>
@@ -506,6 +623,21 @@ namespace UnityEngine
 			this.r = transform.localRotation;
 			this.s = transform.localScale;
 		}
+
+		public override void Apply(Component component)
+		{
+			Transform transform = (Transform)component;
+
+			// If there was no change on client side than use server values
+			if (!transform.hasChanged) {
+				transform.localPosition = this.p;
+				transform.localRotation = this.r;
+				transform.localScale = this.s;
+
+				// Avoid triggering update of changes
+				transform.hasChanged = false;
+			}
+		}
 	}
 
 	/// <summary>
@@ -524,6 +656,16 @@ namespace UnityEngine
 			this.n = camera.nearClipPlane;
 			this.f = camera.farClipPlane;
 			this.v = camera.fieldOfView;
+		}
+
+		public override void Apply (Component component)
+		{
+			Camera camera = (Camera)component;
+
+			camera.depth = this.d;
+			camera.nearClipPlane = this.n;
+			camera.farClipPlane = this.f;
+			camera.fieldOfView = this.v;
 		}
 	}
 
@@ -546,6 +688,16 @@ namespace UnityEngine
 			this.i = light.intensity;
 			this.b = light.bounceIntensity;
 		}
+
+		public override void Apply (Component component)
+		{
+			Light light = (Light)component;
+
+			light.type = this.t;
+			light.color = this.c;
+			light.intensity = this.i;
+			light.bounceIntensity = this.b;
+		}
 	}
 
 	/// <summary>
@@ -554,19 +706,32 @@ namespace UnityEngine
 	[Serializable]
 	class _MeshFilter : _Component
 	{
-		public Vector3[] v;
+		public string name;
+		public Vector3[] v, n;
 		public Vector2[] u;
 		public int[] t;
 
 		public _MeshFilter(Component component) : base(component) 
 		{
 			MeshFilter meshFilter = (MeshFilter)component;
-
 			Mesh mesh = meshFilter.sharedMesh;
 
+			this.name = mesh.name;
 			this.v = mesh.vertices;
+			this.n = mesh.normals;
 			this.u = mesh.uv;
 			this.t = mesh.triangles;
+		}
+
+		public override void Apply (Component component)
+		{
+			MeshFilter meshFilter = (MeshFilter)component;
+			meshFilter.mesh = new Mesh ();
+			meshFilter.mesh.name = this.name;
+			meshFilter.mesh.vertices = this.v;
+			meshFilter.mesh.normals = this.n;
+			meshFilter.mesh.uv = this.u;
+			meshFilter.mesh.triangles = this.t;
 		}
 	}
 
@@ -577,6 +742,25 @@ namespace UnityEngine
 	[Serializable]
 	class _MeshRenderer : _Component
 	{
-		public _MeshRenderer(Component component) : base(component) {}
+		public string s;
+
+		public _MeshRenderer(Component component) : base(component) 
+		{
+			MeshRenderer meshRenderer = (MeshRenderer)component;
+			Material material = meshRenderer.material;
+			this.s = material.shader.name;
+		}
+
+		public override void Apply (Component component) 
+		{
+			MeshRenderer meshRenderer = (MeshRenderer)component;
+			Shader shader = Shader.Find(this.s);
+
+			if(shader != null)
+			{
+				Material material = new Material (shader);
+				meshRenderer.material = material;
+			}
+		}
 	}
 }
