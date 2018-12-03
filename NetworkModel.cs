@@ -7,7 +7,7 @@
  *
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
- * @version 2017-05-11
+ * @version 2018-12-03
  **/
 ﻿using System;
 using System.Collections.Generic;
@@ -40,14 +40,16 @@ namespace UnityEngine
 		public bool TIMESTAMP = false;
 
 		[HeaderAttribute("Update components")]
-		public bool TRANSFORM = true;
-		public bool CAMERA = true;
+    [Tooltip("IMPORTANT: Make script [Serializable] and set namespace to UnityEngine")]
+    public bool SCRIPT = true;
+    public bool TRANSFORM = true;
+    public bool CAMERA = true;
 		public bool LIGHT = true;
 		public bool MESHFILTER = true;
 		public bool MESHRENDERER = true;
 
-		// Variables for websocket connection
-		private WebSocket webSocket;
+    // Variables for websocket connection
+    private WebSocket webSocket;
 
 		// Variable for update interval
 		private float time;
@@ -60,7 +62,7 @@ namespace UnityEngine
 		private Queue<HierarchyUpdate> hierarchyQueue;
 
 		/// <summary>
-		/// Initialize all default attributes 
+		/// Initialize all default attributes
 		/// </summary>
 		void Start ()
 		{
@@ -136,7 +138,7 @@ namespace UnityEngine
 					// Method for handling incoming messages
 					this.webSocket.OnMessage += (sender, message) => this.Response (message.Data);
 				}
-				catch(Exception exception) 
+				catch(Exception exception)
 				{
 					// Something went wrong
 					Debug.Log (exception);
@@ -153,13 +155,13 @@ namespace UnityEngine
 		private void ProcessServerChanges()
 		{
 			// Handle requests from server
-			for (int j = 0; j < this.requestQueue.Count; j++) 
+			for (int j = 0; j < this.requestQueue.Count; j++)
 			{
 				// Get next Request
 				_Request request = this.requestQueue.Dequeue ();
 
 				// Process request
-				switch (request.type) 
+				switch (request.type)
 				{
 					case _Request.DELETE:
 						if (request.parameter == "")
@@ -182,21 +184,21 @@ namespace UnityEngine
 		private void ProcessClientChanges()
 		{
 			// Run through all child gameobjects from root gameobject
-			foreach (Transform transform in this.gameObject.GetComponentsInChildren<Transform>()) 
+			foreach (Transform transform in this.gameObject.GetComponentsInChildren<Transform>())
 			{
 				// Check if given transform is not from root
-				if (transform != this.gameObject.transform) 
+				if (transform != this.gameObject.transform)
 				{
 					// Check if given transform is not in nodeDictionary
-					if (!this.nodeDictionary.ContainsKey (transform.gameObject.name)) 
+					if (!this.nodeDictionary.ContainsKey (transform.gameObject.name))
 					{
 						this.nodeDictionary.Add (transform.gameObject.name, new Node (transform.gameObject));
 						this.Request (new _Request (transform.gameObject, _Request.INSERT, this));
 						transform.hasChanged = false;
 						continue;
-					} 
+					}
 					// Check if given transform is in nodeDictionary as different node
-					else if (this.nodeDictionary [transform.gameObject.name].gameObject.GetInstanceID () != transform.gameObject.GetInstanceID ()) 
+					else if (this.nodeDictionary [transform.gameObject.name].gameObject.GetInstanceID () != transform.gameObject.GetInstanceID ())
 					{
 						transform.gameObject.name = "RENAMED_" + transform.gameObject.GetInstanceID ().ToString ();
 						this.nodeDictionary.Add (transform.gameObject.name, new Node (transform.gameObject));
@@ -213,18 +215,18 @@ namespace UnityEngine
 					List<_Component> updatedComponents = new List<_Component>();
 
 					// Update existing components
-					foreach (KeyValuePair<Type, string> entry in node.componentDictionary) 
+					foreach (KeyValuePair<Type, string> entry in node.componentDictionary)
 					{
 						Component component = transform.gameObject.GetComponent (entry.Key);
 						Type type = Util.TypeToSerializableType (component.GetType ());
 
 						// Component is not existing anymore
-						if (component == null) 
+						if (component == null)
 						{
 							// Send delete to server
 							this.Request(new _Request(transform.gameObject.name, _Request.DELETE, type.ToString(), this));
-						} 
-						else 
+						}
+						else
 						{
 							// Update the component
 							string hash = Util.Convert(component).GetHash ();
@@ -238,7 +240,7 @@ namespace UnityEngine
 					node.UpdateHashes ();
 
 					// Update only if components changed
-					if (transform.hasChanged || updatedComponents.Count > 0) 
+					if (transform.hasChanged || updatedComponents.Count > 0)
 					{
 						// Create request
 						_Request _request = new _Request (transform.gameObject.name, _Request.UPDATE, "", this);
@@ -257,14 +259,14 @@ namespace UnityEngine
 		private void ProcessGarbage()
 		{
 			// Remove not existing objects
-			List<string> removeList = new List<string>();  
-			foreach (KeyValuePair<string, Node> entry in this.nodeDictionary) 
+			List<string> removeList = new List<string>();
+			foreach (KeyValuePair<string, Node> entry in this.nodeDictionary)
 			{
 				// If object is not existing remove from map and server
-				if (entry.Value == null || entry.Value.gameObject == null || entry.Key != (entry.Value.gameObject.name)) 
+				if (entry.Value == null || entry.Value.gameObject == null || entry.Key != (entry.Value.gameObject.name))
 					removeList.Add (entry.Key);
 			}
-			foreach (string entry in removeList) 
+			foreach (string entry in removeList)
 			{
 				this.Request (new _Request(entry, _Request.DELETE, "", this));
 				this.nodeDictionary.Remove (entry);
@@ -272,8 +274,7 @@ namespace UnityEngine
 		}
 
 		/// <summary>
-		/// Synchronizes the game objectfrom server request
-		/// Extend this for supporting more components
+		/// Synchronizes the game object from server request
 		/// </summary>
 		/// <param name="_request">Request from server</param>
 		private void SynchronizeGameObject(_Request _request)
@@ -281,10 +282,18 @@ namespace UnityEngine
 			Node node = this.ReferenceToGameObject(_request);
 
 			// Update the components
-			foreach (_Component _component in _request.components) 
+			foreach (_Component _component in _request.components)
 			{
-				Component component = this.ReferenceToComponent (node.gameObject, Util.SerializableTypeToType(_component.GetType()));
-				_component.Apply(component);
+                Type type = Util.SerializableTypeToType(_component.GetType());
+
+                if (_component.GetType() == typeof(_Script))
+                {
+                    _Script script = (_Script)_component;
+                    type = Type.GetType(script.ScriptType());
+                }
+
+                Component component = this.ReferenceToComponent(node.gameObject, type);
+                _component.Apply(component);
 			}
 
 			// Add hashes for new added components
@@ -296,8 +305,8 @@ namespace UnityEngine
 		/// </summary>
 		private void SynchronizeHierarchy()
 		{
-			// List of gameobjects that need an hierarchy update 
-			for (int i = 0; i < this.hierarchyQueue.Count; i++) 
+			// List of gameobjects that need an hierarchy update
+			for (int i = 0; i < this.hierarchyQueue.Count; i++)
 			{
 				// Get first request
 				HierarchyUpdate hierarchyUpdate = this.hierarchyQueue.Dequeue ();
@@ -310,7 +319,7 @@ namespace UnityEngine
 					parent = this.nodeDictionary [hierarchyUpdate.parent].gameObject.transform;
 
 				// If parent is not null update otherwise put request back in queue
-				if (parent != null) 
+				if (parent != null)
 				{
 					hierarchyUpdate.gameObject.transform.parent = parent;
 					hierarchyUpdate.gameObject.SetActive (true);
@@ -323,7 +332,7 @@ namespace UnityEngine
 
 		private void DeleteGameObject(string gameObject)
 		{
-			if (this.nodeDictionary.ContainsKey (gameObject)) 
+			if (this.nodeDictionary.ContainsKey (gameObject))
 			{
 				Destroy (this.nodeDictionary [gameObject].gameObject);
 				this.nodeDictionary.Remove (gameObject);
@@ -332,11 +341,11 @@ namespace UnityEngine
 
 		private void DeleteComponent(string gameObject, string component)
 		{
-			if (this.nodeDictionary.ContainsKey (gameObject)) 
+			if (this.nodeDictionary.ContainsKey (gameObject))
 			{
 				GameObject obj = this.nodeDictionary [gameObject].gameObject;
 				Type type = Type.GetType (component + ", UnityEngine");
-				if (type != null) 
+				if (type != null)
 				{
 					Component comp = obj.GetComponent(type);
 					Destroy (comp);
@@ -347,8 +356,8 @@ namespace UnityEngine
 		// Finds or creates a reference to gameobject specified in request
 		private Node ReferenceToGameObject(_Request _request)
 		{
-			Node node;	
-			if (!this.nodeDictionary.ContainsKey (_request.id)) 
+			Node node;
+			if (!this.nodeDictionary.ContainsKey (_request.id))
 			{
 				GameObject gameObject = new GameObject ();
 				gameObject.name = _request.id;
@@ -357,22 +366,22 @@ namespace UnityEngine
 				node = new Node (gameObject);
 				this.hierarchyQueue.Enqueue (new HierarchyUpdate (gameObject, _request.parameter));
 				this.nodeDictionary.Add (_request.id, node);
-			} 
-			else 
+			}
+			else
 			{
 				node = this.nodeDictionary [_request.id];
-				if (node.gameObject.transform.parent.name != _request.parameter) 
+				if (node.gameObject.transform.parent.name != _request.parameter)
 				{
 					node.gameObject.SetActive (false);
 					this.hierarchyQueue.Enqueue (new HierarchyUpdate (node.gameObject, _request.parameter));
 				}
 			}
-				
+
 			return node;
 		}
 
-		// Finds or creates a reference to component specified by T and gameobject
-		private Component ReferenceToComponent(GameObject gameObject, Type type) 
+		// Finds or creates a reference to component specified by gameobject and type
+		private Component ReferenceToComponent(GameObject gameObject, Type type)
 		{
 			Component component = gameObject.GetComponent(type);
 			if (component != null)
@@ -382,8 +391,8 @@ namespace UnityEngine
 			return component;
 		}
 
-		// Sending a request
-		private void Request(_Request _request)
+        // Sending a request
+        private void Request(_Request _request)
 		{
 			if (this.SERVER) {
 				if (_request.parameter == this.gameObject.name)
@@ -405,12 +414,10 @@ namespace UnityEngine
 			}
 		}
 	}
-		
+
 	/// <summary>
 	/// Utils
 	/// </summary>
-	/// <param name="obj">Object.</param>
-	/// <typeparam name="T">The 1st type parameter.</typeparam>
 	static class Util
 	{
 		public static long Timestamp()
@@ -420,7 +427,7 @@ namespace UnityEngine
 
 		public static Type TypeToSerializableType(Type type)
 		{
-			return Type.GetType("UnityEngine._" + type.Name);
+            return Type.GetType("UnityEngine._" + type.Name);
 		}
 
 		public static Type SerializableTypeToType(Type type)
@@ -430,9 +437,13 @@ namespace UnityEngine
 
 		public static _Component Convert(Component component)
 		{
-			Type componentType = Util.TypeToSerializableType (component.GetType ());
-			if (componentType != null)
-				return (_Component)Activator.CreateInstance (componentType, new Object[]{ component });
+			Type type = Util.TypeToSerializableType (component.GetType ());
+
+            if (component.GetType().IsSubclassOf(typeof(MonoBehaviour)))
+                type = typeof(_Script);
+
+            if (type != null)
+				return (_Component)Activator.CreateInstance (type, new Object[]{ component });
 			return null;
 		}
 	}
@@ -455,9 +466,12 @@ namespace UnityEngine
 		{
 			this.componentDictionary = new Dictionary<Type, string>();
 
-			foreach (Component component in this.gameObject.GetComponents(typeof(Component))) 
+			foreach (Component component in this.gameObject.GetComponents(typeof(Component)))
 			{
-				Type type = Util.TypeToSerializableType(component.GetType ());
+                Type type = Util.TypeToSerializableType(component.GetType());
+
+                if (component.GetType().IsSubclassOf(typeof(MonoBehaviour)))
+                    type = typeof(_Script);
 
 				if(type != null)
 					this.componentDictionary.Add(component.GetType(), Util.Convert(component).GetHash());
@@ -466,18 +480,21 @@ namespace UnityEngine
 
 		public void AddMissingComponents()
 		{
-			foreach (Component component in this.gameObject.GetComponents(typeof(Component))) 
+			foreach (Component component in this.gameObject.GetComponents(typeof(Component)))
 			{
 				Type type = Util.TypeToSerializableType(component.GetType ());
 
-				if (type != null && !this.componentDictionary.ContainsKey(component.GetType()))
+                if (component.GetType().IsSubclassOf(typeof(MonoBehaviour)))
+                    type = typeof(_Script);
+
+                if (type != null && !this.componentDictionary.ContainsKey(component.GetType()))
 					this.componentDictionary.Add(component.GetType(), "");
 			}
 		}
 	}
 
 	/// <summary>
-	/// Struct for a hierarchy change 
+	/// Struct for a hierarchy change
 	/// </summary>
 	struct HierarchyUpdate
 	{
@@ -502,7 +519,7 @@ namespace UnityEngine
 		public const string UPDATE = "u";
 
 		public string id;
-		public string type; 
+		public string type;
 		public string parameter;
 
 		public long timestamp;
@@ -513,7 +530,7 @@ namespace UnityEngine
 		[NonSerialized]
 		public List<_Component> components;
 
-		public _Request(string id, string type, string parameter, NetworkModel root) 
+		public _Request(string id, string type, string parameter, NetworkModel root)
 		{
 			this.id = id;
 			this.type = type;
@@ -526,7 +543,7 @@ namespace UnityEngine
 			this.components = new List<_Component> ();
 		}
 
-		public _Request(GameObject gameObject, string type, NetworkModel root) 
+		public _Request(GameObject gameObject, string type, NetworkModel root)
 		{
 			this.id = gameObject.name;
 			this.type = type;
@@ -539,23 +556,32 @@ namespace UnityEngine
 			this.components = new List<_Component> ();
 
 			// Save supported and enabled components of gameobject
-			foreach (Component component in gameObject.GetComponents(typeof(Component))) {
-				// Check if public variable is existing for component
-				#pragma warning disable CS0168 
-				if(Util.TypeToSerializableType (component.GetType ()) != null)
+			foreach (Component component in gameObject.GetComponents(typeof(Component)))
+            {
+                if (component.GetType().IsSubclassOf(typeof(MonoBehaviour)))
+                {
+                    if (!root.SCRIPT)
+                        continue;
+
+                    this.components.Add(new _Script(component));
+                }
+                else if (Util.TypeToSerializableType (component.GetType ()) != null)
 				{
 					try
 					{
-						if ((bool)typeof(NetworkModel).GetField(component.GetType ().Name.ToUpper()).GetValue(root)) 
+                        // Check if public variable is existing for component
+                        if ((bool)typeof(NetworkModel).GetField(component.GetType ().Name.ToUpper()).GetValue(root))
 							this.components.Add(Util.Convert(component));
 					}
-					catch(Exception exc)
+					catch(Exception)
 					{
 						Debug.LogWarning("Serializable class for " + component + "exists but no public bool variable to enable/disbale it.");
 						this.components.Add(Util.Convert(component));
 					}
 				}
-				#pragma warning restore CS0168
+                else
+                    if (root.DEBUGGING)
+                        Debug.Log("The component " + component.GetType() + " is unknown and cannot be synchronized.");
 			}
 		}
 
@@ -564,7 +590,7 @@ namespace UnityEngine
 			this.componentNames = new List<string> ();
 			this.componentValues = new List<string> ();
 
-			foreach (_Component component in this.components) 
+			foreach (_Component component in this.components)
 			{
 				this.componentNames.Add (component.GetType ().ToString());
 				this.componentValues.Add (JsonUtility.ToJson(component));
@@ -575,7 +601,7 @@ namespace UnityEngine
 		{
 			this.components = new List<_Component> ();
 
-			for (int i = 0; i < this.componentNames.Count && i < this.componentValues.Count; i++) 
+			for (int i = 0; i < this.componentNames.Count && i < this.componentValues.Count; i++)
 			{
 				Type type = Type.GetType (this.componentNames[i]);
 				this.components.Add((_Component)JsonUtility.FromJson (this.componentValues[i], type));
@@ -586,17 +612,16 @@ namespace UnityEngine
 	/// <summary>
 	/// Super class for all components
 	/// </summary>
-	/// <param name="component">Component.</param>
 	[Serializable]
-	abstract class _Component 
+	abstract class _Component
 	{
 		public _Component(Component component) {}
 
 		abstract public void Apply(Component component);
 
-		public string GetHash()
+		public virtual string GetHash()
 		{
-			string hash = "";
+            string hash = "";
 			FieldInfo[] fields = this.GetType().GetFields();
 			foreach(FieldInfo field in fields)
 			{
@@ -606,10 +631,36 @@ namespace UnityEngine
 		}
 	}
 
-	/// <summary>
-	/// Serializable transform
-	/// </summary>
-	[Serializable]
+    /// <summary>
+    /// Serializable script
+    /// </summary>
+    [Serializable]
+    class _Script : _Component
+    {
+        public string type;
+        public string value;
+
+        public _Script(Component component) : base(component)
+        {
+            this.type = component.GetType().AssemblyQualifiedName;
+            this.value = JsonUtility.ToJson(component);
+        }
+
+        public override void Apply(Component component)
+        {
+            JsonUtility.FromJsonOverwrite(this.value, component);
+        }
+
+        public string ScriptType()
+        {
+            return this.type;
+        }
+    }
+
+    /// <summary>
+    /// Serializable transform
+    /// </summary>
+    [Serializable]
 	class _Transform : _Component
 	{
 		public Vector3 p, s;
@@ -648,7 +699,7 @@ namespace UnityEngine
 	{
 		public float d, n, f, v;
 
-		public _Camera(Component component) : base(component) 
+		public _Camera(Component component) : base(component)
 		{
 			Camera camera = (Camera)component;
 
@@ -679,7 +730,7 @@ namespace UnityEngine
 		public Color c;
 		public float i, b;
 
-		public _Light(Component component) : base(component) 
+		public _Light(Component component) : base(component)
 		{
 			Light light = (Light)component;
 
@@ -711,7 +762,7 @@ namespace UnityEngine
 		public Vector2[] u;
 		public int[] t;
 
-		public _MeshFilter(Component component) : base(component) 
+		public _MeshFilter(Component component) : base(component)
 		{
 			MeshFilter meshFilter = (MeshFilter)component;
 			Mesh mesh = meshFilter.sharedMesh;
@@ -726,6 +777,7 @@ namespace UnityEngine
 		public override void Apply (Component component)
 		{
 			MeshFilter meshFilter = (MeshFilter)component;
+
 			meshFilter.mesh = new Mesh ();
 			meshFilter.mesh.name = this.name;
 			meshFilter.mesh.vertices = this.v;
@@ -738,20 +790,20 @@ namespace UnityEngine
 	/// <summary>
 	/// Serializable meshrenderer
 	/// </summary>
-	/// <param name="component">Component.</param>
 	[Serializable]
 	class _MeshRenderer : _Component
 	{
 		public string s;
 
-		public _MeshRenderer(Component component) : base(component) 
+		public _MeshRenderer(Component component) : base(component)
 		{
 			MeshRenderer meshRenderer = (MeshRenderer)component;
 			Material material = meshRenderer.material;
+
 			this.s = material.shader.name;
 		}
 
-		public override void Apply (Component component) 
+		public override void Apply (Component component)
 		{
 			MeshRenderer meshRenderer = (MeshRenderer)component;
 			Shader shader = Shader.Find(this.s);
