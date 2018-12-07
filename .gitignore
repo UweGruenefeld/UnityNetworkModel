@@ -1,4 +1,4 @@
-# Packages
+# Package files
 *.7z
 *.dmg
 *.gz
@@ -8,18 +8,15 @@
 *.tar
 *.zip
 
-# Logs
+# Log files
 logs
 *.log
-npm-debug.log*
 
-# Dependency directories
-node_modules/
+# Build files
+*.apk
+*.unitypackage
 
-# Optional npm cache directory
-.npm
-
-# OS generated files
+# OS files
 .DS_Store
 .DS_Store?
 ._*
@@ -27,3 +24,35 @@ node_modules/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# NodeJS files
+nodejs/node_modules/
+.npm
+npm-debug.log*
+
+# Visual Studio files
+unity/.vs/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.VC.db
+
+# Unity files
+unity/[Ll]ibrary/
+unity/[Tt]emp/
+unity/[Oo]bj/
+unity/[Bb]uild/
+unity/[Bb]uilds/
+unity/Assets/AssetStoreTools*
+unity/sysinfo.txt
+*.pidb.meta
+*.pdb.meta
