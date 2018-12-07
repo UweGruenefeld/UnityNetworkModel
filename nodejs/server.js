@@ -9,9 +9,9 @@
  **/
 
 var config		= require('./config.json');
-var model			= {};
+var model		= {};
 
-var websocket = require("nodejs-websocket");
+var websocket 	= require("nodejs-websocket");
 var server		= websocket.createServer(function(connection)
 {
 	console.log("New socket connection");
@@ -35,19 +35,19 @@ var server		= websocket.createServer(function(connection)
 	}
 
 	// Function to validate timestamp
-	function validate(id, timestamp)
+	function validate(name, timestamp)
 	{
-		if(!model.hasOwnProperty(id))
+		if(!model.hasOwnProperty(name))
 			return true;
 
-		return timestamp >= model[id]['timestamp'];
+		return timestamp >= model[name]['timestamp'];
 	}
 
 	// Send model to new client
 	Object.keys(model).forEach(function(key)
 	{
 		var send = JSON.stringify({
-			id: key,
+			name: key,
 			type: 'i',
 			parameter: model[key]['parameter'],
 			timestamp: model[key]['timestamp'],
@@ -79,7 +79,7 @@ var server		= websocket.createServer(function(connection)
 		}
 
 		// Validate request
-		if(json.hasOwnProperty('id') &&
+		if(json.hasOwnProperty('name') &&
 			json.hasOwnProperty('type') &&
 			json.hasOwnProperty('parameter'))
 		{
@@ -89,14 +89,14 @@ var server		= websocket.createServer(function(connection)
 				case 'd':
 
 					// Check if timestamp is newer then last update
-					if(model.hasOwnProperty(json.id) && validate(json.id, json.timestamp))
+					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
 					{
 						if(json.parameter == "")
 							// Delete object
-							delete model[json.id];
+							delete model[json.name];
 						else
 							// Delete component
-							delete model[json.id]['components'][json.parameter];
+							delete model[json.name]['components'][json.parameter];
 
 						// Send delete request to all sockets
 						var send = JSON.stringify(json);
@@ -112,26 +112,26 @@ var server		= websocket.createServer(function(connection)
 
 				// If it is a insert request
 				case 'i':
-					if(model.hasOwnProperty(json.id) && validate(json.id, json.timestamp))
+					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
 					{
 						json.type = 'u';
-						json.parameter = model[json.id]['parameter'];
-						json.timestamp = model[json.id]['timestamp'];
-						json.componentNames = keys(model[json.id]['components']);
-						json.componentValues = values(model[json.id]['components']);
+						json.parameter = model[json.name]['parameter'];
+						json.timestamp = model[json.name]['timestamp'];
+						json.componentNames = keys(model[json.name]['components']);
+						json.componentValues = values(model[json.name]['components']);
 						connection.sendText(JSON.stringify(json));
 						break;
 					}
 
 				// If it is a update request
 				case 'u':
-					if(validate(json.id, json.timestamp))
+					if(validate(json.name, json.timestamp))
 					{
-						if(!model.hasOwnProperty(json.id))
-							model[json.id] = {};
+						if(!model.hasOwnProperty(json.name))
+							model[json.name] = {};
 
-						if(!model[json.id].hasOwnProperty('components'))
-							model[json.id]['components'] = {}
+						if(!model[json.name].hasOwnProperty('components'))
+							model[json.name]['components'] = {}
 
 						// Run through all components
 						for(var i = 0;
@@ -139,14 +139,14 @@ var server		= websocket.createServer(function(connection)
 							i < json.componentValues.length;
 							i++)
 						{
-							model[json.id]['components'][json.componentNames[i]] =
+							model[json.name]['components'][json.componentNames[i]] =
 								json.componentValues[i];
 						}
 
-						model[json.id] = {
+						model[json.name] = {
 							'parameter': json.parameter,
 							'timestamp': json.timestamp,
-							'components': model[json.id]['components']};
+							'components': model[json.name]['components']};
 
 						// Send value to all connected sockets
 						var send = JSON.stringify(json);

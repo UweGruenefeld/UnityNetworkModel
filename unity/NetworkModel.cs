@@ -3,11 +3,11 @@
  *
  * Attach this script to a gameobject in Unity
  * and all children gameobjects will be
- * synchronized over the specified server
+ * synchronized to the specified server
  *
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
- * @version 2018-12-03
+ * @version 2018-12-07
  **/
 ﻿using System;
 using System.Collections.Generic;
@@ -21,42 +21,50 @@ namespace UnityEngine
 	/// </summary>
 	public class NetworkModel : MonoBehaviour
 	{
-		[HeaderAttribute("Debugging")]
-		public bool DEBUGGING = false;
-
 		[HeaderAttribute("Connection")]
 		public string IP = "127.0.0.1";
 		public int PORT = 8080;
+        [Tooltip("Time in seconds between reconnect attempts")]
+        [Range(0.5f, 5.0f)]
+        public float RECONNECT = 1f;
 
-		[HeaderAttribute("Update")]
-		public bool CLIENT = true;
-		public bool SERVER = true;
+		[HeaderAttribute("Update direction")]
+		public bool RECEIVE = true;
+		public bool SEND = true;
 
-		[HeaderAttribute("Update period in seconds")]
+		[HeaderAttribute("Update period (in seconds)")]
 		[Range(0.0f, 10.0f)]
-		public float PERIOD = 0f;
+		public float PERIOD = 0.1f;
 
 		[HeaderAttribute("Update with timestamp")]
 		public bool TIMESTAMP = false;
 
 		[HeaderAttribute("Update components")]
-    [Tooltip("IMPORTANT: Make script [Serializable] and set namespace to UnityEngine")]
-    public bool SCRIPT = true;
-    public bool TRANSFORM = true;
-    public bool CAMERA = true;
+        public bool TRANSFORM = true;
+        public bool CAMERA = true;
 		public bool LIGHT = true;
 		public bool MESHFILTER = true;
 		public bool MESHRENDERER = true;
+        public bool BOXCOLLIDER = true;
+        public bool SPHERECOLLIDER = true;
 
-    // Variables for websocket connection
-    private WebSocket webSocket;
+        [HeaderAttribute("Update scripts")]
+        [Tooltip("Script has to be [Serializable] and in the namespace UnityEngine")]
+        public bool SCRIPTS = true;
+
+        [HeaderAttribute("Debugging")]
+        public bool DEBUGGING = false;
+
+        // Variables for websocket connection
+        private WebSocket webSocket;
+        private float lastAttempt;
 
 		// Variable for update interval
 		private float time;
 
 		// Variables for gameobject synchronization
 		private Dictionary<string, Node> nodeDictionary;
-		private Queue<_Request> requestQueue;	// FIX ConcurrentQueue to make the queue thread-safe
+        private Queue<_Request> requestQueue;
 
 		// Variables for hierarchy synchronization
 		private Queue<HierarchyUpdate> hierarchyQueue;
@@ -66,7 +74,8 @@ namespace UnityEngine
 		/// </summary>
 		void Start ()
 		{
-			// Default values
+            // Default values
+            this.lastAttempt = this.RECONNECT;
 			this.time = 0f;
 
 			// Initialize object synchronization
@@ -122,27 +131,33 @@ namespace UnityEngine
 		/// <returns><c>true</c>, if connection was established, <c>false</c> otherwise.</returns>
 		private bool ProcessConnection()
 		{
-			// If the websocket is null
-			if(this.webSocket == null)
-				this.webSocket = new WebSocket ("ws://" + this.IP + ":" + this.PORT);
+            // If the websocket is null
+            if (this.webSocket == null)
+                this.webSocket = new WebSocket("ws://" + this.IP + ":" + this.PORT);
 
-			// If the websocket is not alive
-			// try to connect to the server
+			// If the websocket is not alive try to connect to the server
 			if (!this.webSocket.IsAlive)
 			{
-				try
-				{
-					// Connect to the server
-					this.webSocket.Connect ();
+                // Check if last attempt to connect is at least one second ago
+                if (this.lastAttempt + this.RECONNECT < Time.realtimeSinceStartup)
+                {
+                    if (this.DEBUGGING)
+                        Debug.Log("NetworkModel: Attempt to connect to server");
 
-					// Method for handling incoming messages
-					this.webSocket.OnMessage += (sender, message) => this.Response (message.Data);
-				}
-				catch(Exception exception)
-				{
-					// Something went wrong
-					Debug.Log (exception);
-				}
+                    try
+                    {
+                        // Connect to the server
+                        this.webSocket.ConnectAsync();
+                        this.lastAttempt = Time.realtimeSinceStartup;
+
+                        // Method for handling incoming messages
+                        this.webSocket.OnMessage += (sender, message) => this.Response(message.Data);
+                    }
+                    catch (Exception)
+                    {
+                        Debug.LogError("NetworkModel: Unable to connect to server");
+                    }
+                }
 			}
 
 			// Return if websocket is alive
@@ -165,9 +180,9 @@ namespace UnityEngine
 				{
 					case _Request.DELETE:
 						if (request.parameter == "")
-							DeleteGameObject (request.id);
+							DeleteGameObject (request.name);
 						else
-							DeleteComponent (request.id, request.parameter);
+							DeleteComponent (request.name, request.parameter);
 						break;
 					case _Request.INSERT:
 					case _Request.UPDATE:
@@ -229,9 +244,9 @@ namespace UnityEngine
 						else
 						{
 							// Update the component
-							string hash = Util.Convert(component).GetHash ();
+							string hash = Util.ComponentToSerializableComponent(component).GetHash ();
 							if (hash != entry.Value) {
-								updatedComponents.Add (Util.Convert(component));
+								updatedComponents.Add (Util.ComponentToSerializableComponent(component));
 							}
 						}
 					}
@@ -240,16 +255,16 @@ namespace UnityEngine
 					node.UpdateHashes ();
 
 					// Update only if components changed
-					if (transform.hasChanged || updatedComponents.Count > 0)
+					if (updatedComponents.Count > 0)
 					{
 						// Create request
 						_Request _request = new _Request (transform.gameObject.name, _Request.UPDATE, "", this);
 						_request.parameter = transform.parent.name;
 						_request.components = updatedComponents;
-						this.Request (_request);
-						transform.hasChanged = false;
+                        this.Request(_request);
 					}
-				}
+                    transform.hasChanged = false;
+                }
 			}
 		}
 
@@ -321,7 +336,20 @@ namespace UnityEngine
 				// If parent is not null update otherwise put request back in queue
 				if (parent != null)
 				{
-					hierarchyUpdate.gameObject.transform.parent = parent;
+                    Transform transform = hierarchyUpdate.gameObject.transform;
+
+                    // Save transform values
+                    Vector3 position = transform.localPosition;
+                    Quaternion rotation = transform.localRotation;
+                    Vector3 scale = transform.localScale;
+
+                    transform.parent = parent;
+
+                    // Restore transform values
+                    transform.localPosition = position;
+                    transform.localRotation = rotation;
+                    transform.localScale = scale;
+
 					hierarchyUpdate.gameObject.SetActive (true);
 					hierarchyUpdate.gameObject.transform.hasChanged = false;
 				}
@@ -330,6 +358,10 @@ namespace UnityEngine
 			}
 		}
 
+        /// <summary>
+        /// Delete gameobject
+        /// </summary>
+        /// <param name="gameObject">Name of gameobject as string</param>
 		private void DeleteGameObject(string gameObject)
 		{
 			if (this.nodeDictionary.ContainsKey (gameObject))
@@ -339,6 +371,11 @@ namespace UnityEngine
 			}
 		}
 
+        /// <summary>
+        /// Delete component of gameobject
+        /// </summary>
+        /// <param name="gameObject">Name of gameobject as string</param>
+        /// <param name="component">Name of component as string</param>
 		private void DeleteComponent(string gameObject, string component)
 		{
 			if (this.nodeDictionary.ContainsKey (gameObject))
@@ -353,23 +390,30 @@ namespace UnityEngine
 			}
 		}
 
-		// Finds or creates a reference to gameobject specified in request
-		private Node ReferenceToGameObject(_Request _request)
+        /// <summary>
+        /// Finds or creates a reference to gameobject specified in request
+        /// </summary>
+        /// <param name="_request">Request that contains the name of the gameobject</param>
+        /// <returns>Returns a node (representation of gameobject)</returns>
+        private Node ReferenceToGameObject(_Request _request)
 		{
 			Node node;
-			if (!this.nodeDictionary.ContainsKey (_request.id))
+
+            // Name of gameobject is not existing
+			if (!this.nodeDictionary.ContainsKey (_request.name))
 			{
 				GameObject gameObject = new GameObject ();
-				gameObject.name = _request.id;
+				gameObject.name = _request.name;
 				gameObject.transform.hasChanged = false;
 				gameObject.SetActive(false);
 				node = new Node (gameObject);
 				this.hierarchyQueue.Enqueue (new HierarchyUpdate (gameObject, _request.parameter));
-				this.nodeDictionary.Add (_request.id, node);
+				this.nodeDictionary.Add (_request.name, node);
 			}
+            // Name of gameobject does exist
 			else
 			{
-				node = this.nodeDictionary [_request.id];
+				node = this.nodeDictionary [_request.name];
 				if (node.gameObject.transform.parent.name != _request.parameter)
 				{
 					node.gameObject.SetActive (false);
@@ -380,8 +424,13 @@ namespace UnityEngine
 			return node;
 		}
 
-		// Finds or creates a reference to component specified by gameobject and type
-		private Component ReferenceToComponent(GameObject gameObject, Type type)
+        /// <summary>
+        /// Finds or creates a reference to component specified by gameobject and type
+        /// </summary>
+        /// <param name="gameObject">Gameobject of component</param>
+        /// <param name="type">Type of component</param>
+        /// <returns>Returns the component</returns>
+        private Component ReferenceToComponent(GameObject gameObject, Type type)
 		{
 			Component component = gameObject.GetComponent(type);
 			if (component != null)
@@ -391,25 +440,33 @@ namespace UnityEngine
 			return component;
 		}
 
-        // Sending a request
+        /// <summary>
+        /// Sending a request
+        /// </summary>
+        /// <param name="_request">Request to send</param>
         private void Request(_Request _request)
 		{
-			if (this.SERVER) {
+			if (this.SEND)
+            {
 				if (_request.parameter == this.gameObject.name)
 					_request.parameter = "root";
 				string json = JsonUtility.ToJson (_request);
 				if(this.DEBUGGING)
-					Debug.Log ("Sent: " + json);
-				this.webSocket.Send (json);
+					Debug.Log ("NetworkModel: Sent message " + json);
+				this.webSocket.SendAsync (json, null);
 			}
 		}
 
-		// Handling a response
+        /// <summary>
+        /// Handling a response
+        /// </summary>
+        /// <param name="json">Response as json string</param>
 		private void Response(string json)
 		{
-			if (this.CLIENT) {
+			if (this.RECEIVE)
+            {
 				if(this.DEBUGGING)
-					Debug.Log ("Recieved: " + json);
+					Debug.Log ("NetworkModel: Recieved message " + json);
 				this.requestQueue.Enqueue (JsonUtility.FromJson<_Request> (json));
 			}
 		}
@@ -420,22 +477,41 @@ namespace UnityEngine
 	/// </summary>
 	static class Util
 	{
+        /// <summary>
+        /// Create a binary timestamp
+        /// </summary>
+        /// <returns>Returns the timestamp</returns>
 		public static long Timestamp()
 		{
 			return DateTime.Now.ToUniversalTime().ToBinary();
 		}
 
+        /// <summary>
+        /// Convert a Unity Component type to a NetworkModel _Component type
+        /// </summary>
+        /// <param name="type">Type of Unity Component</param>
+        /// <returns>Type of NetworkModel _Component</returns>
 		public static Type TypeToSerializableType(Type type)
 		{
             return Type.GetType("UnityEngine._" + type.Name);
 		}
 
+        /// <summary>
+        /// Convert a NetworkModel _Component type to a Unity Component type
+        /// </summary>
+        /// <param name="type">Type of NetworkModel _Component</param>
+        /// <returns>Type of Unity Component</returns>
 		public static Type SerializableTypeToType(Type type)
 		{
 			return Type.GetType("UnityEngine." + type.Name.Substring(1) + ", UnityEngine");
 		}
 
-		public static _Component Convert(Component component)
+        /// <summary>
+        /// Convert a Unity Component to a NetworkModel Component
+        /// </summary>
+        /// <param name="component">Unity Component</param>
+        /// <returns>NetworkModel _Component</returns>
+		public static _Component ComponentToSerializableComponent(Component component)
 		{
 			Type type = Util.TypeToSerializableType (component.GetType ());
 
@@ -456,12 +532,19 @@ namespace UnityEngine
 		public GameObject gameObject;
 		public Dictionary<Type, string> componentDictionary;
 
+        /// <summary>
+        /// Transforms a GameObject to a Node
+        /// </summary>
+        /// <param name="gameObject"></param>
 		public Node(GameObject gameObject)
 		{
 			this.gameObject = gameObject;
 			this.UpdateHashes ();
 		}
 
+        /// <summary>
+        /// Updates the hashvalues for a Node
+        /// </summary>
 		public void UpdateHashes()
 		{
 			this.componentDictionary = new Dictionary<Type, string>();
@@ -474,10 +557,13 @@ namespace UnityEngine
                     type = typeof(_Script);
 
 				if(type != null)
-					this.componentDictionary.Add(component.GetType(), Util.Convert(component).GetHash());
+					this.componentDictionary.Add(component.GetType(), Util.ComponentToSerializableComponent(component).GetHash());
 			}
 		}
 
+        /// <summary>
+        /// Adds missing components of a Node
+        /// </summary>
 		public void AddMissingComponents()
 		{
 			foreach (Component component in this.gameObject.GetComponents(typeof(Component)))
@@ -501,6 +587,11 @@ namespace UnityEngine
 		public GameObject gameObject;
 		public string parent;
 
+        /// <summary>
+        /// Describes a changed parent for a GameObject
+        /// </summary>
+        /// <param name="gameObject">GameObject</param>
+        /// <param name="parent">The name of the new parent GameObject</param>
 		public HierarchyUpdate(GameObject gameObject, string parent)
 		{
 			this.gameObject = gameObject;
@@ -509,7 +600,7 @@ namespace UnityEngine
 	}
 
 	/// <summary>
-	/// Class for every kind of request
+	/// Class for all requests to server
 	/// </summary>
 	[Serializable]
 	class _Request : ISerializationCallbackReceiver
@@ -518,7 +609,7 @@ namespace UnityEngine
 		public const string INSERT = "i";
 		public const string UPDATE = "u";
 
-		public string id;
+		public string name;
 		public string type;
 		public string parameter;
 
@@ -530,9 +621,16 @@ namespace UnityEngine
 		[NonSerialized]
 		public List<_Component> components;
 
-		public _Request(string id, string type, string parameter, NetworkModel root)
+        /// <summary>
+        /// Constructor for _Request
+        /// </summary>
+        /// <param name="name">Name of GameObject</param>
+        /// <param name="type">Type of the Component as string</param>
+        /// <param name="parameter">Parameter (DELETE, INSERT or UPDATE)</param>
+        /// <param name="root">Reference to NetworkModel object</param>
+		public _Request(string name, string type, string parameter, NetworkModel root)
 		{
-			this.id = id;
+			this.name = name;
 			this.type = type;
 			this.parameter = parameter;
 
@@ -543,9 +641,15 @@ namespace UnityEngine
 			this.components = new List<_Component> ();
 		}
 
+        /// <summary>
+        /// Constructor for _Request
+        /// </summary>
+        /// <param name="gameObject">GameObject</param>
+        /// <param name="type">Type of the Component as string</param>
+        /// <param name="root">Reference to NetworkModel object</param>
 		public _Request(GameObject gameObject, string type, NetworkModel root)
 		{
-			this.id = gameObject.name;
+			this.name = gameObject.name;
 			this.type = type;
 			this.parameter = gameObject.transform.parent.name;
 
@@ -558,11 +662,8 @@ namespace UnityEngine
 			// Save supported and enabled components of gameobject
 			foreach (Component component in gameObject.GetComponents(typeof(Component)))
             {
-                if (component.GetType().IsSubclassOf(typeof(MonoBehaviour)))
+                if (component.GetType().IsSubclassOf(typeof(MonoBehaviour)) && root.SCRIPTS)
                 {
-                    if (!root.SCRIPT)
-                        continue;
-
                     this.components.Add(new _Script(component));
                 }
                 else if (Util.TypeToSerializableType (component.GetType ()) != null)
@@ -571,20 +672,23 @@ namespace UnityEngine
 					{
                         // Check if public variable is existing for component
                         if ((bool)typeof(NetworkModel).GetField(component.GetType ().Name.ToUpper()).GetValue(root))
-							this.components.Add(Util.Convert(component));
+							this.components.Add(Util.ComponentToSerializableComponent(component));
 					}
 					catch(Exception)
 					{
-						Debug.LogWarning("Serializable class for " + component + "exists but no public bool variable to enable/disbale it.");
-						this.components.Add(Util.Convert(component));
+						Debug.LogWarning("NetworkModel: Serializable class for " + component + "exists but no public bool variable to enable/disbale it.");
+						this.components.Add(Util.ComponentToSerializableComponent(component));
 					}
 				}
                 else
                     if (root.DEBUGGING)
-                        Debug.Log("The component " + component.GetType() + " is unknown and cannot be synchronized.");
+                        Debug.Log("NetworkModel: Component " + component.GetType() + " is unknown and cannot be synchronized.");
 			}
 		}
 
+        /// <summary>
+        /// Before the request is send to the server
+        /// </summary>
 		public void OnBeforeSerialize()
 		{
 			this.componentNames = new List<string> ();
@@ -597,6 +701,9 @@ namespace UnityEngine
 			}
 		}
 
+        /// <summary>
+        /// After the response is received from the server
+        /// </summary>
 		public void OnAfterDeserialize()
 		{
 			this.components = new List<_Component> ();
@@ -610,7 +717,7 @@ namespace UnityEngine
 	}
 
 	/// <summary>
-	/// Super class for all components
+	/// Super class for all serializable Components
 	/// </summary>
 	[Serializable]
 	abstract class _Component
@@ -632,7 +739,7 @@ namespace UnityEngine
 	}
 
     /// <summary>
-    /// Serializable script
+    /// Serializable Script
     /// </summary>
     [Serializable]
     class _Script : _Component
@@ -658,7 +765,7 @@ namespace UnityEngine
     }
 
     /// <summary>
-    /// Serializable transform
+    /// Serializable Transform
     /// </summary>
     [Serializable]
 	class _Transform : _Component
@@ -680,19 +787,20 @@ namespace UnityEngine
 			Transform transform = (Transform)component;
 
 			// If there was no change on client side than use server values
-			if (!transform.hasChanged) {
-				transform.localPosition = this.p;
-				transform.localRotation = this.r;
+			if (!transform.hasChanged)
+            { 
+                transform.localPosition = this.p;
+                transform.localRotation = this.r;
 				transform.localScale = this.s;
 
 				// Avoid triggering update of changes
 				transform.hasChanged = false;
-			}
+            }
 		}
 	}
 
 	/// <summary>
-	/// Serializable camera
+	/// Serializable Camera
 	/// </summary>
 	[Serializable]
 	class _Camera : _Component
@@ -721,7 +829,7 @@ namespace UnityEngine
 	}
 
 	/// <summary>
-	/// Serializable light
+	/// Serializable Light
 	/// </summary>
 	[Serializable]
 	class _Light : _Component
@@ -752,7 +860,7 @@ namespace UnityEngine
 	}
 
 	/// <summary>
-	/// Serializable meshfilter
+	/// Serializable MeshFilter
 	/// </summary>
 	[Serializable]
 	class _MeshFilter : _Component
@@ -788,7 +896,7 @@ namespace UnityEngine
 	}
 
 	/// <summary>
-	/// Serializable meshrenderer
+	/// Serializable MeshRenderer
 	/// </summary>
 	[Serializable]
 	class _MeshRenderer : _Component
@@ -815,4 +923,76 @@ namespace UnityEngine
 			}
 		}
 	}
+
+    /// <summary>
+    /// Serializable BoxCollider
+    /// </summary>
+    class _BoxCollider : _Component
+    {
+        public Vector3 c, s;
+
+        public _BoxCollider(Component component) : base(component)
+        {
+            BoxCollider boxcollider = (BoxCollider)component;
+
+            this.c = boxcollider.center;
+            this.s = boxcollider.size;
+        }
+
+        public override void Apply(Component component)
+        {
+            BoxCollider boxcollider = (BoxCollider)component;
+
+            boxcollider.center = this.c;
+            boxcollider.size = this.s;
+        }
+    }
+
+    /// <summary>
+    /// Serializable SphereCollider
+    /// </summary>
+    class _SphereCollider : _Component
+    {
+        public Vector3 c;
+        public float r;
+
+        public _SphereCollider(Component component) : base(component)
+        {
+            SphereCollider spherecollider = (SphereCollider)component;
+
+            this.c = spherecollider.center;
+            this.r = spherecollider.radius;
+        }
+
+        public override void Apply(Component component)
+        {
+            SphereCollider spherecollider = (SphereCollider)component;
+
+            spherecollider.center = this.c;
+            spherecollider.radius = this.r;
+        }
+    }
+
+    /*
+     * TEMPLATE FOR NEW COMPONENT
+     * 
+     * [Serializable]
+     * class _NAMEOFCOMPONENT : _Component
+     * {
+     *     CLASS VARIABLES TO SYNCHRONIZE
+     *     
+     *     // Prepare component for sending to server
+     *     public _NAMEOFCOMPONENT(Component component) : base(component)
+     *     {
+     *          SAVE VARIABLES FROM COMPONENT IN CLASS VARIABLES
+     *     }
+     *     
+     *     // Apply received values to component
+     *     public override void Apply (Component component)
+     *     {
+     *          RESTORE CLASS VARIABLES INTO VARIABLES FROM COMPONENT
+     *     }
+     * }
+     *
+     */
 }
