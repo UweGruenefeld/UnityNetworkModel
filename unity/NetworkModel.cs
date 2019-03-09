@@ -39,6 +39,10 @@ namespace UnityEngine
 		[HeaderAttribute("Update with timestamp")]
 		public bool TIMESTAMP = false;
 
+		[HeaderAttribute("Use existing components")]
+		[Tooltip("Only Client-side. Attempts to find existing GameObjects of the correct name before creating new ones.")]
+		public bool EXISTINGCOMP = false;
+
 		[HeaderAttribute("Update components")]
         public bool TRANSFORM = true;
         public bool CAMERA = true;
@@ -402,8 +406,17 @@ namespace UnityEngine
             // Name of gameobject is not existing
 			if (!this.nodeDictionary.ContainsKey (_request.name))
 			{
-				GameObject gameObject = new GameObject ();
-				gameObject.name = _request.name;
+				GameObject gameObject;
+				if(EXISTINGCOMP){
+					gameObject = FindTransform(this.transform, _request.name).gameObject;
+					if(gameObject == null){
+						gameObject = new GameObject();
+						gameObject.name = _request.name;
+					}
+				}else{
+					gameObject = new GameObject ();
+					gameObject.name = _request.name;
+				}
 				gameObject.transform.hasChanged = false;
 				gameObject.SetActive(false);
 				node = new Node (gameObject);
@@ -469,6 +482,23 @@ namespace UnityEngine
 					Debug.Log ("NetworkModel: Recieved message " + json);
 				this.requestQueue.Enqueue (JsonUtility.FromJson<_Request> (json));
 			}
+		}
+
+		private Transform FindTransform(Transform parent, string name)
+		{
+			if (parent.name.Equals(name)) 
+			{
+				return parent;
+			}
+	        foreach (Transform child in parent)
+	        {
+	            Transform result = FindTransform(child, name);
+	            if (result != null) 
+	            {
+	            	return result;
+	            }
+	        }
+	        return null;
 		}
 	}
 
