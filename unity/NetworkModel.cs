@@ -49,6 +49,7 @@ namespace UnityEngine
 		public bool LIGHT = true;
 		public bool MESHFILTER = true;
 		public bool MESHRENDERER = true;
+        public bool MESHCOLLIDER = true;
         public bool BOXCOLLIDER = true;
         public bool SPHERECOLLIDER = true;
 
@@ -799,14 +800,16 @@ namespace UnityEngine
 	{
 		public Vector3 p, s;
 		public Quaternion r;
+        public string t;
 
 		public _Transform(Component component) : base(component)
 		{
 			Transform transform = (Transform)component;
-
+            
 			this.p = transform.localPosition;
 			this.r = transform.localRotation;
 			this.s = transform.localScale;
+            this.t = transform.tag;
 		}
 
 		public override void Apply(Component component)
@@ -819,6 +822,7 @@ namespace UnityEngine
                 transform.localPosition = this.p;
                 transform.localRotation = this.r;
 				transform.localScale = this.s;
+                transform.tag = this.t;
 
 				// Avoid triggering update of changes
 				transform.hasChanged = false;
@@ -833,6 +837,8 @@ namespace UnityEngine
 	class _Camera : _Component
 	{
 		public float d, n, f, v;
+        public Color b;
+        public CameraClearFlags c;
 
 		public _Camera(Component component) : base(component)
 		{
@@ -842,6 +848,8 @@ namespace UnityEngine
 			this.n = camera.nearClipPlane;
 			this.f = camera.farClipPlane;
 			this.v = camera.fieldOfView;
+            this.b = camera.backgroundColor;
+            this.c = camera.clearFlags;
 		}
 
 		public override void Apply (Component component)
@@ -852,6 +860,8 @@ namespace UnityEngine
 			camera.nearClipPlane = this.n;
 			camera.farClipPlane = this.f;
 			camera.fieldOfView = this.v;
+            camera.backgroundColor = this.b;
+            camera.clearFlags = this.c;
 		}
 	}
 
@@ -868,7 +878,7 @@ namespace UnityEngine
 		public _Light(Component component) : base(component)
 		{
 			Light light = (Light)component;
-
+            
 			this.t = light.type;
 			this.c = light.color;
 			this.i = light.intensity;
@@ -892,6 +902,8 @@ namespace UnityEngine
 	[Serializable]
 	class _MeshFilter : _Component
 	{
+        private static Dictionary<Mesh, int> knownMeshes = new Dictionary<Mesh, int>();
+
 		public string name;
 		public Vector3[] v, n;
 		public Vector2[] u;
@@ -920,36 +932,58 @@ namespace UnityEngine
 			meshFilter.mesh.uv = this.u;
 			meshFilter.mesh.triangles = this.t;
 		}
-	}
+    }
 
-	/// <summary>
-	/// Serializable MeshRenderer
-	/// </summary>
-	[Serializable]
-	class _MeshRenderer : _Component
-	{
-		public string s;
+    /// <summary>
+    /// Serializable MeshRenderer
+    /// </summary>
+    [Serializable]
+    class _MeshRenderer : _Component
+    {
+        public string s;
 
-		public _MeshRenderer(Component component) : base(component)
-		{
-			MeshRenderer meshRenderer = (MeshRenderer)component;
-			Material material = meshRenderer.material;
+        public _MeshRenderer(Component component) : base(component)
+        {
+            MeshRenderer meshRenderer = (MeshRenderer)component;
+            Material material = meshRenderer.material;
 
-			this.s = material.shader.name;
-		}
+            this.s = material.shader.name;
+        }
 
-		public override void Apply (Component component)
-		{
-			MeshRenderer meshRenderer = (MeshRenderer)component;
-			Shader shader = Shader.Find(this.s);
+        public override void Apply(Component component)
+        {
+            MeshRenderer meshRenderer = (MeshRenderer)component;
+            Shader shader = Shader.Find(this.s);
 
-			if(shader != null)
-			{
-				Material material = new Material (shader);
-				meshRenderer.material = material;
-			}
-		}
-	}
+            if (shader != null)
+            {
+                Material material = new Material(shader);
+                meshRenderer.material = material;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Serializable MeshCollider
+    /// </summary>
+    [Serializable]
+    class _MeshCollider : _Component
+    {
+        public string name;
+
+        public _MeshCollider(Component component) : base(component)
+        {
+            MeshCollider meshCollider = (MeshCollider)component;
+            Mesh mesh = meshCollider.sharedMesh;
+
+            this.name = mesh.name;
+        }
+
+        public override void Apply(Component component)
+        {
+            MeshCollider meshCollider = (MeshCollider)component;
+        }
+    }
 
     /// <summary>
     /// Serializable BoxCollider
