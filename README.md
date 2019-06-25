@@ -23,8 +23,7 @@ To install the UnityNetworkModel follow these five simple steps:
 * Tested with Unity version 2017.4 or higher
 
 ## Platforms
-* Supported platforms are PC (including VR headsets), Linux, MacOS, Android and iOS
-* Not supported is the Microsoft Hololens due to missing support for WebSockets
+* Supported platforms are PC (including VR headsets), Linux, MacOS, Android, iOS and Hololens
 
 ## Structure
 

@@ -105,7 +105,9 @@ var server		= websocket.createServer(function(connection)
 							console.log("Sent: " + send)
 
 						server.connections.forEach(function (socket) {
-							socket.sendText(send);
+							if(socket != connection){
+								socket.sendText(send);
+							}
 						});
 					}
 				break;
@@ -155,7 +157,9 @@ var server		= websocket.createServer(function(connection)
 							console.log("Sent: " + send)
 
 						server.connections.forEach(function (socket) {
-							socket.sendText(send);
+							if(socket != connection){
+								socket.sendText(send);
+							}
 						});
 					}
 					break;
