@@ -86,6 +86,9 @@ namespace UnityEngine
 			this.nodeDictionary = new Dictionary<string, Node>();
 			this.requestQueue = new Queue<_Request>();
 
+            // Add root to nodeDictionary
+            this.nodeDictionary.Add("root", new Node(this.gameObject));
+
 			// Initialize hierarchy synchronization
 			this.hierarchyQueue = new Queue<HierarchyUpdate> ();
 		}
@@ -208,18 +211,14 @@ namespace UnityEngine
 				// Check if given transform is not from root
 				if (transform != this.gameObject.transform)
 				{
+					// Resolve naming conflicts
+                    while (this.nodeDictionary.ContainsKey(transform.gameObject.name) && this.nodeDictionary[transform.gameObject.name].gameObject.GetInstanceID() != transform.gameObject.GetInstanceID())
+                    {
+                        transform.gameObject.name = transform.gameObject.name + "_" + transform.gameObject.GetInstanceID().ToString();
+                    }
 					// Check if given transform is not in nodeDictionary
 					if (!this.nodeDictionary.ContainsKey (transform.gameObject.name))
 					{
-						this.nodeDictionary.Add (transform.gameObject.name, new Node (transform.gameObject));
-						this.Request (new _Request (transform.gameObject, _Request.INSERT, this));
-						transform.hasChanged = false;
-						continue;
-					}
-					// Check if given transform is in nodeDictionary as different node
-					else if (this.nodeDictionary [transform.gameObject.name].gameObject.GetInstanceID () != transform.gameObject.GetInstanceID ())
-					{
-						transform.gameObject.name = "RENAMED_" + transform.gameObject.GetInstanceID ().ToString ();
 						this.nodeDictionary.Add (transform.gameObject.name, new Node (transform.gameObject));
 						this.Request (new _Request (transform.gameObject, _Request.INSERT, this));
 						transform.hasChanged = false;
@@ -332,9 +331,7 @@ namespace UnityEngine
 
 				// Check for parent
 				Transform parent = null;
-				if (hierarchyUpdate.parent == "root")
-					parent = this.transform;
-				else if (this.nodeDictionary.ContainsKey (hierarchyUpdate.parent))
+				if (this.nodeDictionary.ContainsKey (hierarchyUpdate.parent))
 					parent = this.nodeDictionary [hierarchyUpdate.parent].gameObject.transform;
 
 				// If parent is not null update otherwise put request back in queue
@@ -461,8 +458,6 @@ namespace UnityEngine
 		{
 			if (this.SEND)
             {
-				if (_request.parameter == this.gameObject.name)
-					_request.parameter = "root";
 				string json = JsonUtility.ToJson (_request);
 				if(this.DEBUGGING)
 					Debug.Log ("NetworkModel: Sent message " + json);
@@ -655,8 +650,8 @@ namespace UnityEngine
         /// Constructor for _Request
         /// </summary>
         /// <param name="name">Name of GameObject</param>
-        /// <param name="type">Type of the Component as string</param>
-        /// <param name="parameter">Parameter (DELETE, INSERT or UPDATE)</param>
+        /// <param name="type">Parameter (DELETE, INSERT or UPDATE)</param>
+        /// <param name="parameter">Type of the Component as string</param>
         /// <param name="root">Reference to NetworkModel object</param>
 		public _Request(string name, string type, string parameter, NetworkModel root)
 		{
@@ -682,8 +677,10 @@ namespace UnityEngine
 			this.name = gameObject.name;
 			this.type = type;
 			this.parameter = gameObject.transform.parent.name;
+            if (this.parameter == root.gameObject.name)
+                this.parameter = "root";
 
-			this.timestamp = 0;
+            this.timestamp = 0;
 			if(root.TIMESTAMP)
 				this.timestamp = Util.Timestamp ();
 
