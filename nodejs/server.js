@@ -10,6 +10,7 @@
 
 var config		= require('./config.json');
 var model		= {};
+var assets		= {};
 
 var websocket 	= require("nodejs-websocket");
 var server		= websocket.createServer(function(connection)
@@ -43,22 +44,56 @@ var server		= websocket.createServer(function(connection)
 		return timestamp >= model[name]['timestamp'];
 	}
 
+	// Function to validate timestamp
+	function validateAsset(name, timestamp)
+	{
+		if(!assets.hasOwnProperty(name))
+			return true;
+
+		return timestamp >= assets[name]['timestamp'];
+	}
+
+	// Send assets to new client
+	Object.keys(assets).forEach(function(key)
+	{
+		var auMsg = JSON.stringify({
+			type: 'au',
+			name: key,
+			timestamp: assets[key]['timestamp'],
+			StringParam1: assets[key]['assetType'],
+			StringParam2: assets[key]['asset'],
+		})
+
+		if(config.debugSend)
+			console.log("Sent: " + auMsg)
+		connection.sendText(auMsg);
+	});
+
 	// Send model to new client
 	Object.keys(model).forEach(function(key)
 	{
-		var send = JSON.stringify({
+		var guMsg = JSON.stringify({
+			type: 'gu',
 			name: key,
-			type: 'i',
-			parameter: model[key]['parameter'],
 			timestamp: model[key]['timestamp'],
-			componentNames: keys(model[key]['components']),
-			componentValues: values(model[key]['components'])
-		});
+			StringParam1: model[key]['parent'],
+		})
 
-		if(config.debug)
-			console.log("Sent: " + send)
+		var cuMsg = JSON.stringify({
+			type: 'cu',
+			name: key,
+			timestamp: model[key]['timestamp'],
+			ListParam1: keys(model[key]['components']),
+			ListParam2: values(model[key]['components'])
+		})
 
-		connection.sendText(send);
+		if(config.debugSend)
+			console.log("Sent: " + guMsg)
+		connection.sendText(guMsg);
+
+		if(config.debugSend)
+			console.log("Sent: " + cuMsg)
+		connection.sendText(cuMsg);
 	});
 
 	// Handle event for incoming text
@@ -68,101 +103,105 @@ var server		= websocket.createServer(function(connection)
 		var json;
 		try
 		{
-			if(config.debug)
-				console.log("Recieved: " + message);
+			if(config.debugRec)
+				console.log("Received: " + message);
 			json = JSON.parse(message);
 		}
 		catch(exception)
 		{
-			if(config.debug)
+			if(config.debugRec)
 				console.log(exception);
+			return;
 		}
 
 		// Validate request
-		if(json.hasOwnProperty('name') &&
-			json.hasOwnProperty('type') &&
-			json.hasOwnProperty('parameter'))
+		if(json.hasOwnProperty('name') && json.hasOwnProperty('type'))
 		{
+			var valid = false;
 			switch (json.type)
 			{
-				// If it is a delete request
-				case 'd':
+				case 'au':
+					if(validateAsset(json.name, json.timestamp)){
+						if(!assets.hasOwnProperty(json.name))
+							assets[json.name] = {};
+						assets[json.name]['timestamp'] = json.timestamp;
+						assets[json.name]['assetType'] = json.StringParam1;
+						assets[json.name]['asset'] = json.StringParam2;
 
-					// Check if timestamp is newer then last update
-					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
-					{
-						if(json.parameter == "")
-							// Delete object
-							delete model[json.name];
-						else
-							// Delete component
-							delete model[json.name]['components'][json.parameter];
-
-						// Send delete request to all sockets
-						var send = JSON.stringify(json);
-
-						if(config.debug)
-							console.log("Sent: " + send)
-
-						server.connections.forEach(function (socket) {
-							if(socket != connection){
-								socket.sendText(send);
-							}
-						});
+						valid = true;
 					}
-				break;
-
-				// If it is a insert request
-				case 'i':
-					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
+					break;
+				case 'ad':
+					if(assets.hasOwnProperty(json.name) && validateAsset(json.name, json.timestamp))
 					{
-						json.type = 'u';
-						json.parameter = model[json.name]['parameter'];
-						json.timestamp = model[json.name]['timestamp'];
-						json.componentNames = keys(model[json.name]['components']);
-						json.componentValues = values(model[json.name]['components']);
-						connection.sendText(JSON.stringify(json));
-						break;
+						delete assets[json.name];
+						
+						valid = true;
 					}
-
-				// If it is a update request
-				case 'u':
+					break;
+				case 'gu':
 					if(validate(json.name, json.timestamp))
 					{
 						if(!model.hasOwnProperty(json.name))
 							model[json.name] = {};
-
 						if(!model[json.name].hasOwnProperty('components'))
 							model[json.name]['components'] = {}
+						model[json.name]['timestamp'] = json.timestamp;
+						model[json.name]['parent'] = json.StringParam1;
 
-						// Run through all components
-						for(var i = 0;
-							i < json.componentNames.length &&
-							i < json.componentValues.length;
-							i++)
-						{
-							model[json.name]['components'][json.componentNames[i]] =
-								json.componentValues[i];
-						}
-
-						model[json.name] = {
-							'parameter': json.parameter,
-							'timestamp': json.timestamp,
-							'components': model[json.name]['components']};
-
-						// Send value to all connected sockets
-						var send = JSON.stringify(json);
-
-						if(config.debug)
-							console.log("Sent: " + send)
-
-						server.connections.forEach(function (socket) {
-							if(socket != connection){
-								socket.sendText(send);
-							}
-						});
+						valid = true;
 					}
 					break;
+				case 'gd':
+					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
+					{
+						delete model[json.name];
+						
+						valid = true;
+					}
+					break;
+				case 'cu':
+					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
+					{
+						model[json.name]['timestamp'] = json.timestamp;
+						// Run through all components
+						for(var i = 0; i < json.ListParam1.length && i < json.ListParam2.length; i++)
+						{
+							model[json.name]['components'][json.ListParam1[i]] = json.ListParam2[i];
+						}
+
+						valid = true;
+					}
+					break;
+				case 'cd':
+					if(model.hasOwnProperty(json.name) && validate(json.name, json.timestamp))
+					{
+						model[json.name]['timestamp'] = json.timestamp;
+						// Run through all components
+						for(var i = 0; i < json.ListParam1.length; i++)
+						{
+							delete model[json.name]['components'][json.ListParam1[i]];
+						}
+
+						valid = true;
+					}
+					break;
+			}
+			if(valid){
+				// Forward request to all other sockets
+				//var send = JSON.stringify(json);
+
+				if(config.debugSend)
+					console.log("Sent: " + message)
+
+				server.connections.forEach(function (socket) {
+					if(socket != connection){
+						socket.sendText(message);
+					}
+				});
+			}else{
+				if(config.debugRec)
+					console.log("Invalid: "+message);
 			}
 		}
 	});
