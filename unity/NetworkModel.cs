@@ -502,11 +502,11 @@ namespace UnityEngine
             // Missing Assets were added while updating components (in Serializer.Component..ctor's)
             // Iterate over assetStore. More Assets may be added to the end of the OrderedDictionary assetStore during iteration; so a for (int i) loop is used instead of enumerators.
             List<string> assetsToDelete = new List<string>();
-            for (int i=0; i < assetStore.Count; i++)
+            for (int i = 0; i < assetStore.Count; i++)
             {
-                AssetStore.AssetNode node = (AssetStore.AssetNode) assetStore[i];
+                AssetStore.AssetNode node = (AssetStore.AssetNode)assetStore[i];
                 string assetName = node.name;
-                if (assetName == null)
+                if (assetName == "null")
                 {
                     continue;
                 }
@@ -793,7 +793,7 @@ namespace UnityEngine
         /// <param name="assetName">Name of the Asset</param>
         /// <param name="type">Type of the Asset</param>
         /// <returns>Asset of matching name</returns>
-        internal AssetNode getOrCreate(string assetName, Type type)
+        internal AssetNode getOrCreate(string assetName, Type type, params System.Object[] args)
         {
             AssetNode node;
 
@@ -806,7 +806,7 @@ namespace UnityEngine
                 }
                 if (asset == null)
                 {
-                    asset = (Object)Activator.CreateInstance(type);
+                    asset = (Object)Activator.CreateInstance(type, args);
                     asset.name = assetName;
                 }
                 node = new AssetNode(asset, assetName, serializer);
@@ -1383,14 +1383,14 @@ namespace UnityEngine
         [Serializable]
         internal class MeshFilter : Component
         {
-            public string n;
+            public string m;
 
             public MeshFilter(UnityEngine.Component component, AssetStore assetStore) : base(component)
             {
                 UnityEngine.MeshFilter meshFilter = (UnityEngine.MeshFilter)component;
                 if (meshFilter.sharedMesh == null)
                 {
-                    this.n = "null";
+                    this.m = "null";
                 }
                 else
                 {
@@ -1399,7 +1399,7 @@ namespace UnityEngine
                     {
                         assetStore.Add(meshFilter.sharedMesh);
                     }
-                    this.n = meshFilter.sharedMesh.name;
+                    this.m = meshFilter.sharedMesh.name;
                 }
             }
 
@@ -1407,7 +1407,7 @@ namespace UnityEngine
             {
                 UnityEngine.MeshFilter meshFilter = (UnityEngine.MeshFilter)component;
 
-                meshFilter.sharedMesh = (UnityEngine.Mesh)assetStore.getOrCreate(this.n, typeof(UnityEngine.Mesh)).asset;
+                meshFilter.sharedMesh = (UnityEngine.Mesh)assetStore.getOrCreate(this.m, typeof(UnityEngine.Mesh)).asset;
             }
         }
 
@@ -1417,26 +1417,31 @@ namespace UnityEngine
         [Serializable]
         internal class MeshRenderer : Component
         {
-            public string s;
+            public string m;
 
             public MeshRenderer(UnityEngine.Component component, AssetStore assetStore) : base(component)
             {
                 UnityEngine.MeshRenderer meshRenderer = (UnityEngine.MeshRenderer)component;
-                Material material = meshRenderer.material;
-
-                this.s = material.shader.name;
+                if (meshRenderer.sharedMaterial == null)
+                {
+                    this.m = "null";
+                }
+                else
+                {
+                    meshRenderer.sharedMaterial.name = assetStore.GetReferenceName(meshRenderer.sharedMaterial);
+                    if (!assetStore.Contains(meshRenderer.sharedMaterial.name))
+                    {
+                        assetStore.Add(meshRenderer.sharedMaterial);
+                    }
+                    this.m = meshRenderer.sharedMaterial.name;
+                }
             }
 
             public override void Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.MeshRenderer meshRenderer = (UnityEngine.MeshRenderer)component;
-                Shader shader = Shader.Find(this.s);
 
-                if (shader != null)
-                {
-                    Material material = new Material(shader);
-                    meshRenderer.material = material;
-                }
+                meshRenderer.sharedMaterial = (UnityEngine.Material)assetStore.getOrCreate(this.m, typeof(UnityEngine.Material), new System.Object[] { Shader.Find("Standard") }).asset;
             }
         }
 
@@ -1446,14 +1451,14 @@ namespace UnityEngine
         [Serializable]
         internal class MeshCollider : Component
         {
-            public string n;
+            public string m;
 
             public MeshCollider(UnityEngine.Component component, AssetStore assetStore) : base(component)
             {
                 UnityEngine.MeshCollider meshCollider = (UnityEngine.MeshCollider)component;
                 if (meshCollider.sharedMesh == null)
                 {
-                    this.n = "null";
+                    this.m = "null";
                 }
                 else
                 {
@@ -1462,14 +1467,14 @@ namespace UnityEngine
                     {
                         assetStore.Add(meshCollider.sharedMesh);
                     }
-                    this.n = meshCollider.sharedMesh.name;
+                    this.m = meshCollider.sharedMesh.name;
                 }
             }
 
             public override void Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.MeshCollider meshCollider = (UnityEngine.MeshCollider)component;
-                meshCollider.sharedMesh = (UnityEngine.Mesh)assetStore.getOrCreate(this.n, typeof(UnityEngine.Mesh)).asset;
+                meshCollider.sharedMesh = (UnityEngine.Mesh)assetStore.getOrCreate(this.m, typeof(UnityEngine.Mesh)).asset;
             }
         }
 
@@ -1569,7 +1574,6 @@ namespace UnityEngine
                 {
                     hash += field.GetValue(this).ToString() + ":";
                 }
-                Debug.Log("hash : " + hash);
                 return hash;
             }
         }
@@ -1631,29 +1635,46 @@ namespace UnityEngine
             }
         }
 
+        [Serializable]
+        internal class Material : Asset
+        {
+            public Color c;
+            public string t; //Reference name for texture asset
+            public Vector2 o, s; //texture offset and scale
+            public string n; //Shader name
 
-        //[Serializable]
-        //internal class Material : Asset
-        //{
-        //    CLASS VARIABLES TO SYNCHRONIZE
 
-        //    // Prepare component for sending to server
-        //    public NAMEOFASSET(System.Object asset, AssetStore assetStore) : base(asset, assetStore)
-        //    {
-        //         SAVE VARIABLES FROM COMPONENT IN CLASS VARIABLES
-        //    }
+            // Prepare component for sending to server
+            public Material(System.Object asset, AssetStore assetStore) : base(asset, assetStore)
+            {
+                UnityEngine.Material material = (UnityEngine.Material)asset;
 
-        //  // Apply received values to asset
-        //    public override void Apply (System.Object asset, AssetStore assetStore)
-        //    {
-        //         RESTORE CLASS VARIABLES INTO VARIABLES FROM COMPONENT
-        //    }
+                this.c = material.color;
+                this.o = material.mainTextureOffset;
+                this.s = material.mainTextureScale;
+                this.n = material.shader.name;
 
-        //    // public override string GetHash() {}
-        //    // {
-        //    //    OVERRIDE TO CONSIDER VALUES INSIDE ARRAYS
-        //    // v}
-        //}
+                this.t = "null";
+            }
+
+            // Apply received values to asset
+            public override void Apply(System.Object asset, AssetStore assetStore)
+            {
+                UnityEngine.Material material = (UnityEngine.Material)asset;
+
+                material.color = this.c;
+                material.mainTextureOffset = this.o;
+                material.mainTextureScale = this.s;
+                material.shader = Shader.Find(this.n);
+
+                material.mainTexture = null;
+            }
+
+            // public override string GetHash() {}
+            // {
+            //    OVERRIDE TO CONSIDER VALUES INSIDE ARRAYS
+            // v}
+        }
 
 
 
