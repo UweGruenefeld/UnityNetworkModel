@@ -34,11 +34,14 @@
  **/
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Reflection;
 using UnityEngine;
 using UnityEditor;
 using WebSocketSharp;
 using System.Text;
+using System.Linq;
+using System.Collections;
 
 namespace UnityEngine
 {
@@ -236,7 +239,7 @@ namespace UnityEngine
         }
 
         /// <summary>
-        /// Changes to the Existance or content of Assets, GameObjects and Components
+        /// Changes to the existance or content of Assets, GameObjects and Components
         /// </summary>
         private void UpdateObjects()
         {
@@ -356,7 +359,7 @@ namespace UnityEngine
         /// <param name="name"></param>
         private void DeleteAsset(string name)
         {
-            if (this.assetStore.ContainsKey(name))
+            if (this.assetStore.Contains(name))
             {
                 this.assetStore.Remove(name);
             }
@@ -497,17 +500,16 @@ namespace UnityEngine
             }
 
             // Missing Assets were added while updating components (in Serializer.Component..ctor's)
-            // Iterate over assetStore
+            // Iterate over assetStore. More Assets may be added to the end of the OrderedDictionary assetStore during iteration; so a for (int i) loop is used instead of enumerators.
             List<string> assetsToDelete = new List<string>();
-            foreach (KeyValuePair<string, AssetStore.AssetNode> assetEntry in assetStore)
+            for (int i=0; i < assetStore.Count; i++)
             {
-                string assetName = assetEntry.Key;
-                // Never synchronize null-Asset
-                if (assetName == "null")
+                AssetStore.AssetNode node = (AssetStore.AssetNode) assetStore[i];
+                string assetName = node.name;
+                if (assetName == null)
                 {
                     continue;
                 }
-                AssetStore.AssetNode node = assetEntry.Value;
 
                 // If Element doesn't exist anymore, schedule it for deletion
                 if (node.asset == null || node.asset.name != assetName || node.asset.GetType() != node.type)
@@ -689,7 +691,7 @@ namespace UnityEngine
             {
                 foreach (Component component in gameObject.GetComponents(typeof(Component)))
                 {
-                    if (serializer.IsSerializable(component.GetType()) && !hashes.ContainsKey(component.GetType()))
+                    if (serializer.ShouldBeSerialized(component.GetType()) && !hashes.ContainsKey(component.GetType()))
                     {
                         hashes.Add(component.GetType(), "");
                     }
@@ -710,7 +712,7 @@ namespace UnityEngine
             /// <param name="type">Type of component to update</param>
             public void UpdateHash(Type type)
             {
-                if (serializer.IsSerializable(type))
+                if (serializer.ShouldBeSerialized(type))
                 {
                     Component component = gameObject.GetComponent(type);
                     if (component != null)
@@ -761,7 +763,7 @@ namespace UnityEngine
     /// <summary>
     /// Collects all known Assets and tracks their last known state.
     /// </summary>
-    class AssetStore : Dictionary<string, AssetStore.AssetNode>
+    class AssetStore : OrderedDictionary/*<string, AssetStore.AssetNode>*/
     {
         private Serializer serializer;
         private NetworkModel config;
@@ -779,7 +781,7 @@ namespace UnityEngine
 
         internal void Add(string name, Object asset)
         {
-            this.Add(name, new AssetNode(asset, serializer));
+            this.Add(name, new AssetNode(asset, name, serializer));
         }
 
         /// <summary>
@@ -795,7 +797,7 @@ namespace UnityEngine
         {
             AssetNode node;
 
-            if (!this.TryGetValue(assetName, out node))
+            if (!this.Contains(assetName))
             {
                 Object asset = null;
                 if (config.EXISTINGASSETS)
@@ -807,12 +809,13 @@ namespace UnityEngine
                     asset = (Object)Activator.CreateInstance(type);
                     asset.name = assetName;
                 }
-                node = new AssetNode(asset, serializer);
+                node = new AssetNode(asset, assetName, serializer);
                 Add(assetName, node);
             }
+            node = (AssetNode)this[assetName];
             return node;
         }
-        
+
         /// <summary>
         /// Determine name that a Asset should be stored under in the store. Will return current storage name if Asset is already present or new free name if not. 
         /// Asset's name should be set to returned name if it is to be stored.
@@ -826,7 +829,7 @@ namespace UnityEngine
                 return "null";
             }
             string refName = asset.name;
-            while (this.ContainsKey(refName) && this[refName].asset.GetInstanceID() != asset.GetInstanceID())
+            while (this.Contains(refName) && ((AssetNode)this[refName]).asset.GetInstanceID() != asset.GetInstanceID())
             {
                 refName = refName + "_" + asset.GetInstanceID().ToString();
             }
@@ -839,6 +842,7 @@ namespace UnityEngine
         public class AssetNode
         {
             public Object asset;
+            public string name;
             private Serializer serializer;
             public Type type;
             public string hash;
@@ -848,8 +852,9 @@ namespace UnityEngine
             /// </summary>
             /// <param name="asset"></param>
             /// <param name="serializer"></param>
-            public AssetNode(Object asset, Serializer serializer)
+            public AssetNode(Object asset, string name, Serializer serializer)
             {
+                this.name = name;
                 if (asset != null)
                 {
                     this.asset = asset;
@@ -1188,7 +1193,7 @@ namespace UnityEngine
         /// </summary>
         /// <param name="type"></param>
         /// <returns></returns>
-        internal bool IsSerializable(Type type)
+        internal bool ShouldBeSerialized(Type type)
         {
             if (type.IsSubclassOf(typeof(MonoBehaviour)) && config.SCRIPTS)
             {
@@ -1390,7 +1395,7 @@ namespace UnityEngine
                 else
                 {
                     meshFilter.sharedMesh.name = assetStore.GetReferenceName(meshFilter.sharedMesh);
-                    if (!assetStore.ContainsKey(meshFilter.sharedMesh.name))
+                    if (!assetStore.Contains(meshFilter.sharedMesh.name))
                     {
                         assetStore.Add(meshFilter.sharedMesh);
                     }
@@ -1453,7 +1458,7 @@ namespace UnityEngine
                 else
                 {
                     meshCollider.sharedMesh.name = assetStore.GetReferenceName(meshCollider.sharedMesh);
-                    if (!assetStore.ContainsKey(meshCollider.sharedMesh.name))
+                    if (!assetStore.Contains(meshCollider.sharedMesh.name))
                     {
                         assetStore.Add(meshCollider.sharedMesh);
                     }
@@ -1625,6 +1630,32 @@ namespace UnityEngine
                 return hash.ToString();
             }
         }
+
+
+        //[Serializable]
+        //internal class Material : Asset
+        //{
+        //    CLASS VARIABLES TO SYNCHRONIZE
+
+        //    // Prepare component for sending to server
+        //    public NAMEOFASSET(System.Object asset, AssetStore assetStore) : base(asset, assetStore)
+        //    {
+        //         SAVE VARIABLES FROM COMPONENT IN CLASS VARIABLES
+        //    }
+
+        //  // Apply received values to asset
+        //    public override void Apply (System.Object asset, AssetStore assetStore)
+        //    {
+        //         RESTORE CLASS VARIABLES INTO VARIABLES FROM COMPONENT
+        //    }
+
+        //    // public override string GetHash() {}
+        //    // {
+        //    //    OVERRIDE TO CONSIDER VALUES INSIDE ARRAYS
+        //    // v}
+        //}
+
+
 
         /*
          * TEMPLATE FOR NEW ASSET
