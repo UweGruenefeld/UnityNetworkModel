@@ -43,7 +43,7 @@ using System.Text;
 namespace UnityEngine
 {
     /// <summary>
-    /// Implements MonoBehaviour and connects to server via websocket
+    /// Manages relations between disparate components
     /// </summary>
     public class NetworkModel : MonoBehaviour
     {
@@ -100,21 +100,11 @@ namespace UnityEngine
             this.assetStore = new AssetStore(serializer, this);
             this.assetStore.Add("null", null);
             this.serializer.SetAssetStore(assetStore);
-            //this.goStore.Add(this.gameObject);
             this.connection = new Connection(this);
             this.worldModel = WorldModel.CreateWorldModel(this.gameObject, goStore, assetStore, connection, serializer, this);
-            //this.receiver = new Receiver(goStore, this);
-            //this.sender = new Sender(connection, this);
 
             //Set up handler for received messages
             this.connection.OnMessage += (sender, message) => worldModel.ReceiveRequest(message.Data);
-            //this.receiveHandler = (sender, message) => worldModel.ReceiveRequest(message.Data);
-            //if (this.RECEIVE)
-            //{
-            //    this.connection.OnMessage += receiveHandler;
-            //    //this.connection.AddMessageHandler(receiveHandler);
-            //}
-            //this.OLD_RECEIVE = this.RECEIVE;
         }
 
         private void Update()
@@ -127,21 +117,6 @@ namespace UnityEngine
                 //try to establish connection, only proceed if successful
                 if (connection.EnsureIsAlive())
                 {
-                    ////en-/disable handler for received messages
-                    //if (this.RECEIVE != this.OLD_RECEIVE)
-                    //{
-                    //    if (this.RECEIVE)
-                    //    {
-                    //        this.connection.OnMessage += receiveHandler;
-                    //        //this.connection.AddMessageHandler(receiveHandler);
-                    //    }
-                    //    else
-                    //    {
-                    //        this.connection.OnMessage -= receiveHandler;
-                    //        //this.connection.RemoveMessageHandler(receiveHandler);
-                    //    }
-                    //    this.OLD_RECEIVE = this.RECEIVE;
-                    //}
                     //apply change-requests that were received from the server since the last update
                     if (this.RECEIVE)
                     {
@@ -157,19 +132,19 @@ namespace UnityEngine
         }
     }
 
-
+    /// <summary>
+    /// Manages connection to webserver. Provides Sender and Receiver capabilities.
+    /// </summary>
     class Connection : WebSocket
     {
         private NetworkModel config;
 
         // Variables for websocket connection
-        //private WebSocket webSocket;
         private float lastAttempt;
 
         public Connection(NetworkModel config) : base("ws://" + config.IP + ":" + config.PORT)
         {
             this.config = config;
-            //this.webSocket = new WebSocket("ws://" + config.IP + ":" + config.PORT);
             lastAttempt = -config.RECONNECT;
         }
 
@@ -178,7 +153,7 @@ namespace UnityEngine
             // If the websocket is not alive try to connect to the server
             if (!this.IsAlive)
             {
-                // Check if last attempt to connect is at least one second ago
+                // Check if last attempt to connect is at least one Reconnect Period ago
                 if (Time.realtimeSinceStartup > this.lastAttempt + config.RECONNECT)
                 {
                     if (config.DEBUGSEND || config.DEBUGREC)
@@ -201,16 +176,6 @@ namespace UnityEngine
             return this.IsAlive;
         }
 
-        //public void AddMessageHandler(EventHandler<MessageEventArgs> handler)
-        //{
-        //    webSocket.OnMessage += handler;
-        //}
-
-        //public void RemoveMessageHandler(EventHandler<MessageEventArgs> handler)
-        //{
-        //    webSocket.OnMessage -= handler;
-        //}
-
         internal void SendRequest(Request request)
         {
             string json = JsonUtility.ToJson(request);
@@ -220,6 +185,9 @@ namespace UnityEngine
         }
     }
 
+    /// <summary>
+    /// Models known state of synchronezed part of the scene. Applies changes as they are requested (if receiving) and periodically checks for new changes to request (if sending).
+    /// </summary>
     class WorldModel : MonoBehaviour
     {
         GameObject root;
@@ -232,6 +200,16 @@ namespace UnityEngine
         private Queue<Request> requestQueue;
         private Queue<HierarchyUpdate> hierarchyQueue;
 
+        /// <summary>
+        /// Faux-constructor since Monobehaviours may not be constructed traditionally.
+        /// </summary>
+        /// <param name="root">Same GameObject as NetworkModel</param>
+        /// <param name="goStore"></param>
+        /// <param name="assetStore"></param>
+        /// <param name="connection"></param>
+        /// <param name="serializer"></param>
+        /// <param name="config">NetworkModel</param>
+        /// <returns>New WorldModel attached to root</returns>
         public static WorldModel CreateWorldModel(GameObject root, GOStore goStore, AssetStore assetStore, Connection connection, Serializer serializer, NetworkModel config)
         {
             WorldModel wm = root.AddComponent<WorldModel>();
@@ -248,27 +226,27 @@ namespace UnityEngine
             return wm;
         }
 
+        /// <summary>
+        /// Apply outstanding changes to scene.
+        /// </summary>
         public void ApplyChanges()
         {
-            ApplyRequests();
+            UpdateObjects();
             UpdateHierarchy();
         }
 
-        private void ApplyRequests()
+        /// <summary>
+        /// Changes to the Existance or content of Assets, GameObjects and Components
+        /// </summary>
+        private void UpdateObjects()
         {
-            if (requestQueue.Count > 0)
-            {
-                Debug.Log(requestQueue.Count);
-            }
-            // Handle requests from server
+            // List of outstanding requests from server
             while (requestQueue.Count > 0)
             {
                 // Get next Request
                 Request request = this.requestQueue.Dequeue();
                 switch (request.objectType + request.updateType)
                 {
-                    //case Request.ASSET:
-                    //    break;
                     case Request.ASSET + Request.UPDATE:
                         UpdateAsset(request);
                         break;
@@ -276,21 +254,17 @@ namespace UnityEngine
                         DeleteAsset(request.name);
                         break;
                     case Request.GAMEOBJECT + Request.UPDATE:
-                        //check if node has correct parent; accounting for differences in root go name.
+                        // Enqueue GameObject to be sorted into hierarchy, creating it if neccessary.
                         GOStore.GONode node = goStore.GetOrCreate(request.name);
-                        //if ((!(request.parent == "root" && node.gameObject.transform.parent == goStore["root"].gameObject.transform))
-                        //    && (node.gameObject.transform.parent.name != request.parent))
-                        //{
                         node.gameObject.SetActive(false);
                         node.gameObject.transform.hasChanged = false;
                         this.hierarchyQueue.Enqueue(new HierarchyUpdate(node, request.parent));
-                        //}
-                        break;
-                    case Request.COMPONENT + Request.UPDATE:
-                        UpdateComponents(request);
                         break;
                     case Request.GAMEOBJECT + Request.DELETE:
                         DeleteGameObject(request.name);
+                        break;
+                    case Request.COMPONENT + Request.UPDATE:
+                        UpdateComponents(request);
                         break;
                     case Request.COMPONENT + Request.DELETE:
                         foreach (Type type in request.componentTypes)
@@ -302,6 +276,9 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Changes to the hierarchy between GameObjects
+        /// </summary>
         private void UpdateHierarchy()
         {
             // List of gameobjects that need an hierarchy update
@@ -310,7 +287,7 @@ namespace UnityEngine
                 // Get first request
                 HierarchyUpdate hierarchyUpdate = this.hierarchyQueue.Dequeue();
 
-                // Check if requested parent is known. If so, set go to be child of parent
+                // Check if requested parent is known. If so, set gameObject to be child of parent
                 GOStore.GONode node;
                 if (goStore.TryGetValue(hierarchyUpdate.parent, out node))
                 {
@@ -341,12 +318,20 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Update content of Asset, creating it if necessary.
+        /// </summary>
+        /// <param name="request"></param>
         private void UpdateAsset(Request request)
         {
             AssetStore.AssetNode node = assetStore.getOrCreate(request.name, serializer.ToCommonType(request.assetType));
             request.asset.Apply(node.asset, assetStore);
         }
 
+        /// <summary>
+        /// Update components in GameObject, creating them if necessary.
+        /// </summary>
+        /// <param name="request"></param>
         private void UpdateComponents(Request request)
         {
             //Find a node of the correct gameobject for the request to use, creating it if it doesn't exist yet.
@@ -365,6 +350,10 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Remove Asset from tracked store. Will only be garbage-collected if no other resource uses it.
+        /// </summary>
+        /// <param name="name"></param>
         private void DeleteAsset(string name)
         {
             if (this.assetStore.ContainsKey(name))
@@ -373,6 +362,10 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Explicitly delete Gameobject from scene and remove it from tracked store.
+        /// </summary>
+        /// <param name="name"></param>
         private void DeleteGameObject(string name)
         {
             GOStore.GONode node;
@@ -383,6 +376,11 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Explicitly delete Component from Gameobject and remove it from tracked store.
+        /// </summary>
+        /// <param name="name">Name of containing gameobject</param>
+        /// <param name="type">Type of component to remove</param>
         private void DeleteComponent(string name, Type type)
         {
             GOStore.GONode node;
@@ -398,6 +396,9 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Check synchronized part of scene for changes in GameObjects, Components or Assets.
+        /// </summary>
         internal void TrackChanges()
         {
             // Add untracked elements to goStore as empty
@@ -418,6 +419,7 @@ namespace UnityEngine
             foreach (KeyValuePair<string, GOStore.GONode> goEntry in goStore)
             {
                 string referenceName = goEntry.Key;
+                // Never synchronize the root gameobject containing the NetworkModel.
                 if (referenceName == "root")
                 {
                     continue;
@@ -431,6 +433,7 @@ namespace UnityEngine
                 // Else, check for changes in hierarchy and components
                 else
                 {
+                    // check if parent of gameObject has changed compared to last known state
                     if (node.gameObject.transform.parent.GetInstanceID() != node.parent)
                     {
                         connection.SendRequest(Request.UpdateGO(node.gameObject, config));
@@ -438,10 +441,10 @@ namespace UnityEngine
                         node.UpdateParent();
                     }
 
-                    //Add untracked components to componentDict as empty
+                    //Add missing components to the node's dictionary of tracked components as unknown
                     node.PopulateHashes();
 
-                    // Iterate over compDict
+                    // Iterate over tracked components of the node. 
                     List<Type> compToDelete = new List<Type>();
                     List<Serializer.Component> compToUpdate = new List<Serializer.Component>();
                     foreach (KeyValuePair<Type, string> hashEntry in node.hashes)
@@ -499,6 +502,7 @@ namespace UnityEngine
             foreach (KeyValuePair<string, AssetStore.AssetNode> assetEntry in assetStore)
             {
                 string assetName = assetEntry.Key;
+                // Never synchronize null-Asset
                 if (assetName == "null")
                 {
                     continue;
@@ -521,6 +525,7 @@ namespace UnityEngine
                     }
                 }
             }
+            // Delete scheduled Assets and send Delete Request
             foreach (string assetName in assetsToDelete)
             {
                 assetStore.Remove(assetName);
@@ -528,6 +533,10 @@ namespace UnityEngine
             }
         }
 
+        /// <summary>
+        /// Handler for new Requests from the server. Simply enqueues them to be applied during the next ApplyChanges().
+        /// </summary>
+        /// <param name="json"></param>
         internal void ReceiveRequest(string json)
         {
             if (config.DEBUGREC)
@@ -553,6 +562,9 @@ namespace UnityEngine
         }
     }
 
+    /// <summary>
+    /// Collects all known GameObjects and tracks the last known state of their parent and components.
+    /// </summary>
     class GOStore : Dictionary<string, GOStore.GONode>
     {
         private Serializer serializer;
@@ -574,6 +586,14 @@ namespace UnityEngine
             this.Add(name, new GONode(go, serializer));
         }
 
+        /// <summary>
+        /// Return a GameObject of the correct name by priority
+        /// 1) A matching tracked GameObject from the store.
+        /// 2) A matching GameObject from tracked part of the scene (if using existing components is enabled).
+        /// 3) A new empty GameObject of the correct name.
+        /// </summary>
+        /// <param name="name">Name of the gameObject</param>
+        /// <returns>GameObject of matching name</returns>
         public GONode GetOrCreate(string name)
         {
 
@@ -596,12 +616,17 @@ namespace UnityEngine
                 }
                 node = new GONode(go, serializer);
                 Add(name, node);
-                //go.transform.hasChanged = false;
             }
 
             return node;
         }
 
+        /// <summary>
+        /// Determine name that a gameObject should be stored under in the store. Will return current storage name if gameObject is already present or new free name if not. 
+        /// GameObject's name should be set to returned name if it is to be stored.
+        /// </summary>
+        /// <param name="go">Original name of gameObject</param>
+        /// <returns>Name the GameObject should be stored under</returns>
         public string GetReferenceName(GameObject go)
         {
             string refName = go.name;
@@ -612,6 +637,12 @@ namespace UnityEngine
             return refName;
         }
 
+        /// <summary>
+        /// Performs a depth-first search for a Transform of the correct Name among all descendants of parent transform.
+        /// </summary>
+        /// <param name="parent"></param>
+        /// <param name="name"></param>
+        /// <returns>Transform of matching name</returns>
         private Transform FindTransform(Transform parent, string name)
         {
             if (parent.name.Equals(name))
@@ -629,6 +660,9 @@ namespace UnityEngine
             return null;
         }
 
+        /// <summary>
+        /// Stores specific GameObject, tracking its last known parent and components
+        /// </summary>
         public class GONode
         {
             public GameObject gameObject;
@@ -637,9 +671,10 @@ namespace UnityEngine
             public Dictionary<Type, string> hashes;
 
             /// <summary>
-            /// Transforms a GameObject to a Node
+            /// Wraps a GameObject into a Node
             /// </summary>
             /// <param name="gameObject"></param>
+            /// <param name="serializer"></param>
             public GONode(GameObject gameObject, Serializer serializer)
             {
                 this.gameObject = gameObject;
@@ -647,6 +682,9 @@ namespace UnityEngine
                 this.hashes = new Dictionary<Type, string>();
             }
 
+            /// <summary>
+            /// Add missing hashes to component Dictionary as empty == unknown
+            /// </summary>
             public void PopulateHashes()
             {
                 foreach (Component component in gameObject.GetComponents(typeof(Component)))
@@ -658,11 +696,18 @@ namespace UnityEngine
                 }
             }
 
+            /// <summary>
+            /// Update stored parent to current state
+            /// </summary>
             public void UpdateParent()
             {
                 this.parent = gameObject.transform.parent.GetInstanceID();
             }
 
+            /// <summary>
+            /// Update specific component hash to current state
+            /// </summary>
+            /// <param name="type">Type of component to update</param>
             public void UpdateHash(Type type)
             {
                 if (serializer.IsSerializable(type))
@@ -675,16 +720,32 @@ namespace UnityEngine
                 }
             }
 
+            /// <summary>
+            /// Update specific component hash to current state
+            /// UpdateHash(Type type) should always be preferred, if possible.
+            /// </summary>
+            /// <param name="comp">serialized component to update</param>
             public void UpdateHash(Serializer.Component comp)
             {
                 hashes[serializer.GetCommonType(comp)] = comp.GetHash();
             }
 
+            /// <summary>
+            /// Remove tracking for component of specific Type
+            /// </summary>
+            /// <param name="type"></param>
             public void RemoveHash(Type type)
             {
                 hashes.Remove(type);
             }
 
+            /// <summary>
+            /// Returns matching Component by priority
+            /// 1) Existing matching component from the gameObject
+            /// 2) New matching component added to the gameObject
+            /// </summary>
+            /// <param name="type"></param>
+            /// <returns>Component of matching Type</returns>
             public Component GetOrCreateComponent(Type type)
             {
                 Component component = gameObject.GetComponent(type);
@@ -697,6 +758,9 @@ namespace UnityEngine
         }
     }
 
+    /// <summary>
+    /// Collects all known Assets and tracks their last known state.
+    /// </summary>
     class AssetStore : Dictionary<string, AssetStore.AssetNode>
     {
         private Serializer serializer;
@@ -718,6 +782,15 @@ namespace UnityEngine
             this.Add(name, new AssetNode(asset, serializer));
         }
 
+        /// <summary>
+        /// Return an Asset of the correct name by priority
+        /// 1) A matching tracked Asset from the store.
+        /// 2) A matching Asset of the correct type from the Resources folder (if using existing assets is enabled).
+        /// 3) A new empty Asset of the correct name and type.
+        /// </summary>
+        /// <param name="assetName">Name of the Asset</param>
+        /// <param name="type">Type of the Asset</param>
+        /// <returns>Asset of matching name</returns>
         internal AssetNode getOrCreate(string assetName, Type type)
         {
             AssetNode node;
@@ -739,7 +812,13 @@ namespace UnityEngine
             }
             return node;
         }
-
+        
+        /// <summary>
+        /// Determine name that a Asset should be stored under in the store. Will return current storage name if Asset is already present or new free name if not. 
+        /// Asset's name should be set to returned name if it is to be stored.
+        /// </summary>
+        /// <param name="asset"></param>
+        /// <returns>Name the Asset should be stored under</returns>
         internal string GetReferenceName(Object asset)
         {
             if (asset == null)
@@ -751,16 +830,12 @@ namespace UnityEngine
             {
                 refName = refName + "_" + asset.GetInstanceID().ToString();
             }
-            //if (!this.ContainsKey(assetName))
-            //{
-            //    this.Add(assetName, new AssetNode(asset));
-            //}
             return refName;
         }
 
-
-
-
+        /// <summary>
+        /// Stores specific Asset, tracking its last known state
+        /// </summary>
         public class AssetNode
         {
             public Object asset;
@@ -768,6 +843,11 @@ namespace UnityEngine
             public Type type;
             public string hash;
 
+            /// <summary>
+            /// Wraps an Asset into a Node
+            /// </summary>
+            /// <param name="asset"></param>
+            /// <param name="serializer"></param>
             public AssetNode(Object asset, Serializer serializer)
             {
                 if (asset != null)
@@ -778,6 +858,9 @@ namespace UnityEngine
                 this.serializer = serializer;
             }
 
+            /// <summary>
+            /// Updates stored state of Asset to match current state
+            /// </summary>
             public void UpdateHash()
             {
                 hash = serializer.ToSerializableAsset(asset).GetHash();
@@ -785,9 +868,13 @@ namespace UnityEngine
         }
     }
 
+    /// <summary>
+    /// Request for changes to Assets, GameObjects and Components to be sent between Client and Server
+    /// </summary>
     [Serializable]
     class Request : ISerializationCallbackReceiver
     {
+        // Types of request
         public const string ASSET = "a";
         public const string GAMEOBJECT = "g";
         public const string COMPONENT = "c";
@@ -795,6 +882,7 @@ namespace UnityEngine
         public const string UPDATE = "u";
         public const string DELETE = "d";
 
+        // Parameters used by all requests
         [NonSerialized]
         public string objectType;
         [NonSerialized]
@@ -803,6 +891,7 @@ namespace UnityEngine
         public string name;
         public long timestamp;
 
+        // Human-readable parameters for specific types of request
         [NonSerialized]
         public string parent;
         [NonSerialized]
@@ -814,12 +903,20 @@ namespace UnityEngine
         [NonSerialized]
         public List<Type> componentTypes;
 
+        // Serialized parameters that human-readable parameters are mapped to while sending over the network
         public string StringParam1;
         public string StringParam2;
         public List<string> ListParam1;
         public List<string> ListParam2;
 
-        public Request(string objectType, string updateType, string name, NetworkModel config)
+        /// <summary>
+        /// Common constructor used by static Request-generating methdos
+        /// </summary>
+        /// <param name="objectType"></param>
+        /// <param name="updateType"></param>
+        /// <param name="name"></param>
+        /// <param name="config"></param>
+        private Request(string objectType, string updateType, string name, NetworkModel config)
         {
             this.objectType = objectType;
             this.updateType = updateType;
@@ -834,11 +931,14 @@ namespace UnityEngine
             }
         }
 
-        //public static Request AssetRequest()
-        //{
-
-        //}
-
+        /// <summary>
+        /// Create Request to update a specific Asset
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="assetType"></param>
+        /// <param name="asset"></param>
+        /// <param name="config"></param>
+        /// <returns>Request</returns>
         internal static Request UpdateAsset(string name, Type assetType, Serializer.Asset asset, NetworkModel config)
         {
             Request req = new Request(ASSET, UPDATE, name, config);
@@ -847,12 +947,24 @@ namespace UnityEngine
             return req;
         }
 
+        /// <summary>
+        /// Create Request to delete a specific Asset
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="config"></param>
+        /// <returns>Request</returns>
         internal static Request DeleteAsset(string name, NetworkModel config)
         {
             Request req = new Request(ASSET, DELETE, name, config);
             return req;
         }
 
+        /// <summary>
+        /// Create Request to update specific GameObject
+        /// </summary>
+        /// <param name="go"></param>
+        /// <param name="config"></param>
+        /// <returns>Request</returns>
         internal static Request UpdateGO(GameObject go, NetworkModel config)
         {
             Request req = new Request(GAMEOBJECT, UPDATE, go.name, config);
@@ -864,12 +976,25 @@ namespace UnityEngine
             return req;
         }
 
+        /// <summary>
+        /// Create Request to delete specific GameObject
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="config"></param>
+        /// <returns>Request</returns>
         public static Request DeleteGO(string name, NetworkModel config)
         {
             Request req = new Request(GAMEOBJECT, DELETE, name, config);
             return req;
         }
 
+        /// <summary>
+        /// Create Request to update a List of Components belonging to a specific GameObject
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="comps"></param>
+        /// <param name="config"></param>
+        /// <returns>Request</returns>
         public static Request UpdateComponents(string name, List<Serializer.Component> comps, NetworkModel config)
         {
             Request req = new Request(COMPONENT, UPDATE, name, config);
@@ -877,6 +1002,13 @@ namespace UnityEngine
             return req;
         }
 
+        /// <summary>
+        /// Create Request to delete a List of Components belonging to a specific GameObject
+        /// </summary>
+        /// <param name="name"></param>
+        /// <param name="types"></param>
+        /// <param name="config"></param>
+        /// <returns>Request</returns>
         public static Request DeleteComponents(string name, List<Type> types, NetworkModel config)
         {
             Request req = new Request(COMPONENT, DELETE, name, config);
@@ -953,6 +1085,9 @@ namespace UnityEngine
         }
     }
 
+    /// <summary>
+    /// Handles conversion between serializable and non-serializable types of Assets and Components
+    /// </summary>
     class Serializer
     {
         AssetStore assetStore;
@@ -988,6 +1123,11 @@ namespace UnityEngine
             return Type.GetType("UnityEngine." + type.Name + ", UnityEngine");
         }
 
+        /// <summary>
+        /// Get the matching Unity Component type from a Serializer.Component; Returns Script type if Component is script
+        /// </summary>
+        /// <param name="comp"></param>
+        /// <returns>Type of Unity Component</returns>
         internal Type GetCommonType(Serializer.Component comp)
         {
             Type type = comp.GetType();
@@ -1028,6 +1168,11 @@ namespace UnityEngine
             return null;
         }
 
+        /// <summary>
+        /// Convert a Unity Object to a NetworkModel Serializer.Asset
+        /// </summary>
+        /// <param name="asset">Unity Object</param>
+        /// <returns>NetworkModel Serializer.Asset</returns>
         internal Asset ToSerializableAsset(Object asset)
         {
             Type type = ToSerializableType(asset.GetType());
@@ -1038,6 +1183,11 @@ namespace UnityEngine
             return null;
         }
 
+        /// <summary>
+        /// Checks whether Type of Unity Component has a matching NetworkModel Serializer.Component and if the matching public bool is set to true.
+        /// </summary>
+        /// <param name="type"></param>
+        /// <returns></returns>
         internal bool IsSerializable(Type type)
         {
             if (type.IsSubclassOf(typeof(MonoBehaviour)) && config.SCRIPTS)
@@ -1066,11 +1216,6 @@ namespace UnityEngine
             }
 
         }
-
-
-
-
-
 
         /// <summary>
         /// Super class for all serializable Components
@@ -1421,14 +1566,6 @@ namespace UnityEngine
                 }
                 Debug.Log("hash : " + hash);
                 return hash;
-
-                //StringBuilder hash = new StringBuilder();
-                //FieldInfo[] fields = this.GetType().GetFields();
-                //foreach (FieldInfo field in fields)
-                //{
-                //    hash.Append(field.GetValue(this).ToString() + ":");
-                //}
-                //return hash.ToString();
             }
         }
 
@@ -1508,6 +1645,11 @@ namespace UnityEngine
          *     {
          *          RESTORE CLASS VARIABLES INTO VARIABLES FROM COMPONENT
          *     }
+         *     
+         *     // public override string GetHash() {}
+         *     // {
+         *     //    OVERRIDE TO CONSIDER VALUES INSIDE ARRAYS
+         *     // v}
          * }
          *
          */
