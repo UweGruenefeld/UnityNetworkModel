@@ -18,9 +18,8 @@
  * 
  * Currently supported assets are
  * - Mesh
- * //- Material
- * //- Texture2D
- * //- RenderTexture
+ * - Material
+ * - Texture2D
  * 
  * To add new synchronizable components or assets, search for
  * TEMPLATE FOR NEW COMPONENT
@@ -40,7 +39,6 @@ using UnityEngine;
 using UnityEditor;
 using WebSocketSharp;
 using System.Text;
-using System.Linq;
 using System.Collections;
 
 namespace UnityEngine
@@ -80,10 +78,6 @@ namespace UnityEngine
         public bool DEBUGSEND = false;
         public bool DEBUGREC = false;
 
-        // Values from previous iteration for detecting changes
-        private bool OLD_RECEIVE;
-
-
         // Components
         private Serializer serializer;
         private GOStore goStore;
@@ -92,7 +86,6 @@ namespace UnityEngine
         private WorldModel worldModel;
 
         private float time;
-        //private EventHandler<MessageEventArgs> receiveHandler;
 
         private void Start()
         {
@@ -201,6 +194,7 @@ namespace UnityEngine
         private NetworkModel config;
 
         private Queue<Request> requestQueue;
+        private Queue<Request> nextRequestQueue;
         private Queue<HierarchyUpdate> hierarchyQueue;
 
         /// <summary>
@@ -224,6 +218,7 @@ namespace UnityEngine
             wm.serializer = serializer;
             wm.config = config;
             wm.requestQueue = new Queue<Request>();
+            wm.nextRequestQueue = new Queue<Request>();
             wm.hierarchyQueue = new Queue<HierarchyUpdate>();
 
             return wm;
@@ -277,6 +272,12 @@ namespace UnityEngine
                         break;
                 }
             }
+
+            // Schedule currently unfulfillable requests for next update.
+            while (nextRequestQueue.Count > 0)
+            {
+                requestQueue.Enqueue(nextRequestQueue.Dequeue());
+            }
         }
 
         /// <summary>
@@ -327,8 +328,39 @@ namespace UnityEngine
         /// <param name="request"></param>
         private void UpdateAsset(Request request)
         {
-            AssetStore.AssetNode node = assetStore.getOrCreate(request.name, serializer.ToCommonType(request.assetType));
-            request.asset.Apply(node.asset, assetStore);
+            AssetStore.AssetNode node;
+            if (assetStore.TryGet(request.name, serializer.ToCommonType(request.assetType), out node))
+            {
+                // if Asset exists, try to apply updates. If successful, request is fulfilled.
+                if (request.asset.Apply(node.asset, assetStore))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                // if Asset doesn't exist, create it and try to apply updates. If successful, request is fulfilled.
+                Object asset = request.asset.Construct();
+                if (request.asset.Apply(asset, assetStore))
+                {
+                    asset.name = request.name;
+                    assetStore.Add(asset);
+                    return;
+                }
+            }
+
+            // if creation / update wasn't successful above, schedule the request to try again later; either in the current or a following update loop.
+            if (request.iteration < 5)
+            {
+                request.iteration++;
+                requestQueue.Enqueue(request);
+            }
+            else
+            {
+                request.iteration = 0;
+                nextRequestQueue.Enqueue(request);
+                Debug.LogWarning("NetworkModel: Missing asset update needed for " + request.name);
+            }
         }
 
         /// <summary>
@@ -347,8 +379,24 @@ namespace UnityEngine
                 if (type != null)
                 {
                     Component component = node.GetOrCreateComponent(type);
-                    serializedComponent.Apply(component, assetStore);
-                    node.UpdateHash(type);
+                    if (serializedComponent.Apply(component, assetStore))
+                    {
+                        node.UpdateHash(type);
+                    }
+                    else
+                    {
+                        Request newReq = Request.UpdateComponents(request.name, new List<Serializer.Component>() { serializedComponent }, config);
+                        if (request.iteration < 5)
+                        {
+                            newReq.iteration = request.iteration + 1;
+                            requestQueue.Enqueue(newReq);
+                        }
+                        else
+                        {
+                            nextRequestQueue.Enqueue(newReq);
+                            Debug.LogWarning("NetworkModel: Missing asset update needed for " + request.name + "." + type);
+                        }
+                    }
                 }
             }
         }
@@ -785,35 +833,38 @@ namespace UnityEngine
         }
 
         /// <summary>
-        /// Return an Asset of the correct name by priority
+        /// Tries to find an Asset of correct name and type
         /// 1) A matching tracked Asset from the store.
         /// 2) A matching Asset of the correct type from the Resources folder (if using existing assets is enabled).
-        /// 3) A new empty Asset of the correct name and type.
         /// </summary>
-        /// <param name="assetName">Name of the Asset</param>
-        /// <param name="type">Type of the Asset</param>
-        /// <returns>Asset of matching name</returns>
-        internal AssetNode getOrCreate(string assetName, Type type, params System.Object[] args)
+        /// <param name="assetName"></param>
+        /// <param name="type"></param>
+        /// <param name="node"></param>
+        /// <returns>Returns true if a matching Asset was found.</returns>
+        internal bool TryGet(string assetName, Type type, out AssetNode node)
         {
-            AssetNode node;
-
-            if (!this.Contains(assetName))
+            if (this.Contains(assetName))
             {
-                Object asset = null;
-                if (config.EXISTINGASSETS)
+                AssetNode tmp = (AssetNode)this[assetName];
+                if (tmp.asset.GetType() == type)
                 {
-                    asset = Resources.Load(assetName, type);
+                    node = tmp;
+                    return true;
                 }
-                if (asset == null)
-                {
-                    asset = (Object)Activator.CreateInstance(type, args);
-                    asset.name = assetName;
-                }
-                node = new AssetNode(asset, assetName, serializer);
-                Add(assetName, node);
             }
-            node = (AssetNode)this[assetName];
-            return node;
+            if (config.EXISTINGASSETS)
+            {
+                Object asset = Resources.Load("NetworkModel/" + assetName, type);
+                if (asset != null)
+                {
+                    node = new AssetNode(asset, assetName, serializer);
+                    Add(assetName, node);
+                    return true;
+                }
+            }
+
+            node = null;
+            return false;
         }
 
         /// <summary>
@@ -845,7 +896,7 @@ namespace UnityEngine
             public string name;
             private Serializer serializer;
             public Type type;
-            public string hash;
+            public string hash = "";
 
             /// <summary>
             /// Wraps an Asset into a Node
@@ -896,6 +947,9 @@ namespace UnityEngine
         public string name;
         public long timestamp;
 
+        [NonSerialized]
+        public int iteration;
+
         // Human-readable parameters for specific types of request
         [NonSerialized]
         public string parent;
@@ -926,6 +980,7 @@ namespace UnityEngine
             this.objectType = objectType;
             this.updateType = updateType;
             this.name = name;
+            this.iteration = 0;
             if (config.TIMESTAMP)
             {
                 this.timestamp = DateTime.Now.ToUniversalTime().ToBinary();
@@ -1233,7 +1288,7 @@ namespace UnityEngine
             {
             }
 
-            abstract public void Apply(UnityEngine.Component component, AssetStore assetStore);
+            abstract public bool Apply(UnityEngine.Component component, AssetStore assetStore);
 
             public virtual string GetHash()
             {
@@ -1262,9 +1317,10 @@ namespace UnityEngine
                 this.value = JsonUtility.ToJson(component);
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 JsonUtility.FromJsonOverwrite(this.value, component);
+                return true;
             }
 
             public string ScriptType()
@@ -1293,7 +1349,7 @@ namespace UnityEngine
                 this.t = transform.tag;
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.Transform transform = (UnityEngine.Transform)component;
 
@@ -1308,6 +1364,7 @@ namespace UnityEngine
                     // Avoid triggering update of changes
                     transform.hasChanged = false;
                 }
+                return true;
             }
         }
 
@@ -1333,7 +1390,7 @@ namespace UnityEngine
                 this.c = camera.clearFlags;
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.Camera camera = (UnityEngine.Camera)component;
 
@@ -1343,6 +1400,8 @@ namespace UnityEngine
                 camera.fieldOfView = this.v;
                 camera.backgroundColor = this.b;
                 camera.clearFlags = this.c;
+
+                return true;
             }
         }
 
@@ -1366,7 +1425,7 @@ namespace UnityEngine
                 this.b = light.bounceIntensity;
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.Light light = (UnityEngine.Light)component;
 
@@ -1374,6 +1433,8 @@ namespace UnityEngine
                 light.color = this.c;
                 light.intensity = this.i;
                 light.bounceIntensity = this.b;
+
+                return true;
             }
         }
 
@@ -1403,11 +1464,18 @@ namespace UnityEngine
                 }
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
-                UnityEngine.MeshFilter meshFilter = (UnityEngine.MeshFilter)component;
+                AssetStore.AssetNode assetNode;
+                if (!assetStore.TryGet(this.m, typeof(UnityEngine.Mesh), out assetNode))
+                {
+                    return false;
+                }
 
-                meshFilter.sharedMesh = (UnityEngine.Mesh)assetStore.getOrCreate(this.m, typeof(UnityEngine.Mesh)).asset;
+                UnityEngine.MeshFilter meshFilter = (UnityEngine.MeshFilter)component;
+                meshFilter.sharedMesh = (UnityEngine.Mesh)assetNode.asset;
+
+                return true;
             }
         }
 
@@ -1437,11 +1505,18 @@ namespace UnityEngine
                 }
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
-                UnityEngine.MeshRenderer meshRenderer = (UnityEngine.MeshRenderer)component;
+                AssetStore.AssetNode assetNode;
+                if (!assetStore.TryGet(this.m, typeof(UnityEngine.Material), out assetNode))
+                {
+                    return false;
+                }
 
-                meshRenderer.sharedMaterial = (UnityEngine.Material)assetStore.getOrCreate(this.m, typeof(UnityEngine.Material), new System.Object[] { Shader.Find("Standard") }).asset;
+                UnityEngine.MeshRenderer meshRenderer = (UnityEngine.MeshRenderer)component;
+                meshRenderer.material = (UnityEngine.Material)assetNode.asset;
+
+                return true;
             }
         }
 
@@ -1471,10 +1546,18 @@ namespace UnityEngine
                 }
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
+                AssetStore.AssetNode assetNode;
+                if (!assetStore.TryGet(this.m, typeof(UnityEngine.Mesh), out assetNode))
+                {
+                    return false;
+                }
+
                 UnityEngine.MeshCollider meshCollider = (UnityEngine.MeshCollider)component;
-                meshCollider.sharedMesh = (UnityEngine.Mesh)assetStore.getOrCreate(this.m, typeof(UnityEngine.Mesh)).asset;
+                meshCollider.sharedMesh = (UnityEngine.Mesh)assetNode.asset;
+
+                return true;
             }
         }
 
@@ -1493,12 +1576,14 @@ namespace UnityEngine
                 this.s = boxcollider.size;
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.BoxCollider boxcollider = (UnityEngine.BoxCollider)component;
 
                 boxcollider.center = this.c;
                 boxcollider.size = this.s;
+
+                return true;
             }
         }
 
@@ -1518,12 +1603,14 @@ namespace UnityEngine
                 this.r = spherecollider.radius;
             }
 
-            public override void Apply(UnityEngine.Component component, AssetStore assetStore)
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
             {
                 UnityEngine.SphereCollider spherecollider = (UnityEngine.SphereCollider)component;
 
                 spherecollider.center = this.c;
                 spherecollider.radius = this.r;
+
+                return true;
             }
         }
 
@@ -1558,13 +1645,19 @@ namespace UnityEngine
         internal abstract class Asset
         {
             protected AssetStore assetStore;
+            protected abstract Type commonType { get; }
 
             public Asset(System.Object asset, AssetStore assetStore)
             {
                 this.assetStore = assetStore;
             }
 
-            abstract public void Apply(System.Object asset, AssetStore assetStore);
+            abstract public bool Apply(System.Object asset, AssetStore assetStore);
+
+            public virtual Object Construct()
+            {
+                return (Object)Activator.CreateInstance(commonType);
+            }
 
             public virtual string GetHash()
             {
@@ -1583,6 +1676,7 @@ namespace UnityEngine
         /// </summary>
         internal class Mesh : Asset
         {
+            protected override Type commonType { get { return typeof(UnityEngine.Mesh); } }
 
             public Vector3[] v, n;
             public Vector2[] u;
@@ -1598,7 +1692,7 @@ namespace UnityEngine
                 this.t = mesh.triangles;
             }
 
-            public override void Apply(System.Object asset, AssetStore assetStore)
+            public override bool Apply(System.Object asset, AssetStore assetStore)
             {
                 UnityEngine.Mesh mesh = (UnityEngine.Mesh)asset;
 
@@ -1606,6 +1700,8 @@ namespace UnityEngine
                 mesh.normals = this.n;
                 mesh.uv = this.u;
                 mesh.triangles = this.t;
+
+                return true;
             }
 
             public override string GetHash()
@@ -1638,10 +1734,13 @@ namespace UnityEngine
         [Serializable]
         internal class Material : Asset
         {
+            protected override Type commonType { get { return typeof(UnityEngine.Material); } }
+
             public Color c;
             public string t; //Reference name for texture asset
             public Vector2 o, s; //texture offset and scale
             public string n; //Shader name
+            public string[] k; //Shader keywords
 
 
             // Prepare component for sending to server
@@ -1649,31 +1748,125 @@ namespace UnityEngine
             {
                 UnityEngine.Material material = (UnityEngine.Material)asset;
 
-                this.c = material.color;
+                if (material.HasProperty("_Color"))
+                {
+                    this.c = material.color;
+                }
                 this.o = material.mainTextureOffset;
                 this.s = material.mainTextureScale;
                 this.n = material.shader.name;
+                this.k = material.shaderKeywords;
 
-                this.t = "null";
+                if (material.mainTexture == null)
+                {
+                    this.t = "null";
+                }
+                else
+                {
+                    material.mainTexture.name = assetStore.GetReferenceName(material.mainTexture);
+                    if (!assetStore.Contains(material.mainTexture.name))
+                    {
+                        assetStore.Add(material.mainTexture);
+                    }
+                    this.t = material.mainTexture.name;
+                }
             }
 
             // Apply received values to asset
-            public override void Apply(System.Object asset, AssetStore assetStore)
+            public override bool Apply(System.Object asset, AssetStore assetStore)
             {
+                AssetStore.AssetNode node = null;
+                if (this.t != "null" && !assetStore.TryGet(this.t, typeof(UnityEngine.Texture2D), out node))
+                {
+                    return false;
+                }
+
                 UnityEngine.Material material = (UnityEngine.Material)asset;
 
-                material.color = this.c;
-                material.mainTextureOffset = this.o;
-                material.mainTextureScale = this.s;
-                material.shader = Shader.Find(this.n);
+                Shader shader = Shader.Find(this.n);
+                if (shader != null)
+                {
+                    material.shader = shader;
+                    material.shaderKeywords = this.k;
+                }
+                if (material.HasProperty("_Color"))
+                {
+                    material.color = this.c;
+                }
+                if (this.t != "null")
+                {
+                    material.mainTextureOffset = this.o;
+                    material.mainTextureScale = this.s;
+                    material.mainTexture = (UnityEngine.Texture2D)node.asset;
+                }
 
-                material.mainTexture = null;
+                return true;
             }
 
-            // public override string GetHash() {}
-            // {
-            //    OVERRIDE TO CONSIDER VALUES INSIDE ARRAYS
-            // v}
+            public override Object Construct()
+            {
+                Shader shader = Shader.Find(this.n);
+                if (shader == null)
+                {
+                    shader = Shader.Find("Standard");
+                }
+                System.Object[] args = new System.Object[] { shader };
+                return (Object)Activator.CreateInstance(commonType, args);
+            }
+
+            public override string GetHash()
+            {
+                StringBuilder hash = new StringBuilder();
+                hash.Append(base.GetHash());
+                foreach (string val in this.k)
+                {
+                    hash.Append(val.ToString());
+                }
+                return hash.ToString();
+            }
+        }
+
+        [Serializable]
+        internal class Texture2D : Asset
+        {
+            protected override Type commonType { get { return typeof(UnityEngine.Texture2D); } }
+
+            public int w, h; //width, height
+            public Color[] p; //pixels
+            private Hash128 textureHash;
+
+            // Prepare component for sending to server
+            public Texture2D(System.Object asset, AssetStore assetStore) : base(asset, assetStore)
+            {
+                UnityEngine.Texture2D texture = (UnityEngine.Texture2D)asset;
+
+                this.w = texture.width;
+                this.h = texture.height;
+                this.p = texture.GetPixels();
+
+                this.textureHash = texture.imageContentsHash;
+            }
+
+            // Apply received values to asset
+            public override bool Apply(System.Object asset, AssetStore assetStore)
+            {
+                UnityEngine.Texture2D texture = (UnityEngine.Texture2D)asset;
+
+                texture.SetPixels(this.p);
+                texture.Apply();
+                // ImageConversion.LoadImage(texture, this.p);
+                return true;
+            }
+
+            public override Object Construct()
+            {
+                return new UnityEngine.Texture2D(this.w, this.h);
+            }
+
+            public override string GetHash()
+            {
+                return base.GetHash() + this.textureHash;
+            }
         }
 
 
@@ -1751,7 +1944,7 @@ namespace UnityEngine
                 EditorGUILayout.LabelField("Receiver properties", EditorStyles.boldLabel);
                 EditorGUI.indentLevel++;
                 nwm.EXISTINGCOMP = EditorGUILayout.Toggle(new GUIContent("Use existing components", "Attempt to find existing GameObjects of the correct name before creating new ones. Names of GameObject descendants of NetworkModel must be unique when using this option."), nwm.EXISTINGCOMP);
-                nwm.EXISTINGASSETS = EditorGUILayout.Toggle(new GUIContent("Use existing assets", "Attempt to find existing Assets of the correct name and type in \"/Resources/\" before creating new ones. Names of Assets in the folder must be unique when using this option."), nwm.EXISTINGASSETS);
+                nwm.EXISTINGASSETS = EditorGUILayout.Toggle(new GUIContent("Use existing assets", "Attempt to find existing Assets of the correct name and type in \"/Resources/NetworkModel\" before creating new ones. Names of Assets in the folder must be unique when using this option."), nwm.EXISTINGASSETS);
                 EditorGUI.indentLevel--;
                 EditorGUILayout.Space();
             }
