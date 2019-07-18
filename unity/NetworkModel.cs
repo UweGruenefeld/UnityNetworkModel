@@ -29,7 +29,7 @@
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
  * @author Tobias Lunte
- * @version 2019-06-30
+ * @version 2019-07-18
  **/
 using System;
 using System.Collections.Generic;
@@ -68,13 +68,12 @@ namespace UnityEngine
         public bool BOXCOLLIDER = true;
         public bool SPHERECOLLIDER = true;
         public bool SCRIPTS = true;
-        //public bool MESH = true;
-        //public bool MATERIAL = true;
-        //public bool TEXTURE = true;
         // Receiver
+        public string RECEIVECHANNELS = "default";
         public bool EXISTINGCOMP = false;
         public bool EXISTINGASSETS = false;
         // Debugging
+        public string SENDCHANNEL = "default";
         public bool DEBUGSEND = false;
         public bool DEBUGREC = false;
 
@@ -84,6 +83,9 @@ namespace UnityEngine
         private AssetStore assetStore;
         private Connection connection;
         private WorldModel worldModel;
+
+        // Old Values to perceive changes
+        private string OLDRECEIVECHANNELS = "";
 
         private float time;
 
@@ -117,6 +119,37 @@ namespace UnityEngine
                     if (this.RECEIVE)
                     {
                         worldModel.ApplyChanges();
+
+                        if (RECEIVECHANNELS != OLDRECEIVECHANNELS)
+                        {
+                            ISet<string> _rChannels = new HashSet<string>(RECEIVECHANNELS.Split(','));
+                            ISet<string> _oldRChannels = new HashSet<string>(OLDRECEIVECHANNELS.Split(','));
+                            ISet<string> rChannels = new HashSet<string>();
+                            ISet<string> oldRChannels = new HashSet<string>();
+                            foreach (string channel in _rChannels)
+                            {
+                                rChannels.Add(channel.Trim());
+                            }
+                            foreach (string channel in _oldRChannels)
+                            {
+                                oldRChannels.Add(channel.Trim());
+                            }
+                            ISet<string> newRChannels = new HashSet<string>(rChannels);
+                            newRChannels.ExceptWith(oldRChannels);
+                            oldRChannels.ExceptWith(rChannels);
+
+                            foreach (string channel in oldRChannels)
+                            {
+                                if (channel != "")
+                                    connection.SendAsync("{\"subscriptionChange\":\"unsubscribe\", \"channel\":\"" + channel + "\"}", null);
+                            }
+                            foreach (string channel in newRChannels)
+                            {
+                                if (channel != "")
+                                    connection.SendAsync("{\"subscriptionChange\":\"subscribe\", \"channel\":\"" + channel + "\"}", null);
+                            }
+                            OLDRECEIVECHANNELS = RECEIVECHANNELS;
+                        }
                     }
                     //send change-requests for modifications since last update to the server
                     if (this.SEND)
@@ -945,6 +978,7 @@ namespace UnityEngine
         public string updateType;
         public string type;
         public string name;
+        public string channel;
         public long timestamp;
 
         [NonSerialized]
@@ -980,6 +1014,7 @@ namespace UnityEngine
             this.objectType = objectType;
             this.updateType = updateType;
             this.name = name;
+            this.channel = config.SENDCHANNEL.Trim();
             this.iteration = 0;
             if (config.TIMESTAMP)
             {
@@ -1924,6 +1959,7 @@ namespace UnityEngine
             {
                 EditorGUILayout.LabelField("Sender properties", EditorStyles.boldLabel);
                 EditorGUI.indentLevel++;
+                nwm.SENDCHANNEL = EditorGUILayout.TextField(new GUIContent("Send on channel", "Singular channel on which to broadcast changes. May not contain \",\"."), nwm.SENDCHANNEL);
                 nwm.TIMESTAMP = EditorGUILayout.Toggle("Update with timestamp", nwm.TIMESTAMP);
                 EditorGUILayout.LabelField(new GUIContent("Update components", "For which components should updates be sent"), EditorStyles.boldLabel);
                 nwm.TRANSFORM = EditorGUILayout.Toggle(new GUIContent("Transform", "localPosition, localRotation, localScale, tag of gameObject"), nwm.TRANSFORM);
@@ -1943,6 +1979,7 @@ namespace UnityEngine
             {
                 EditorGUILayout.LabelField("Receiver properties", EditorStyles.boldLabel);
                 EditorGUI.indentLevel++;
+                nwm.RECEIVECHANNELS = EditorGUILayout.TextField(new GUIContent("Receive on channels", "List of channels from which to receive changes, separated by \",\"."), nwm.RECEIVECHANNELS);
                 nwm.EXISTINGCOMP = EditorGUILayout.Toggle(new GUIContent("Use existing components", "Attempt to find existing GameObjects of the correct name before creating new ones. Names of GameObject descendants of NetworkModel must be unique when using this option."), nwm.EXISTINGCOMP);
                 nwm.EXISTINGASSETS = EditorGUILayout.Toggle(new GUIContent("Use existing assets", "Attempt to find existing Assets of the correct name and type in \"/Resources/NetworkModel\" before creating new ones. Names of Assets in the folder must be unique when using this option."), nwm.EXISTINGASSETS);
                 EditorGUI.indentLevel--;
@@ -1961,4 +1998,4 @@ namespace UnityEngine
             EditorGUI.indentLevel--;
         }
     }
-}
+}   //A Space Odyssey
