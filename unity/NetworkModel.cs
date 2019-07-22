@@ -1868,7 +1868,6 @@ namespace UnityEngine
 
             public int w, h; //width, height
             public Color[] p; //pixels
-            private Hash128 textureHash;
 
             // Prepare component for sending to server
             public Texture2D(System.Object asset, AssetStore assetStore) : base(asset, assetStore)
@@ -1879,11 +1878,6 @@ namespace UnityEngine
                 this.h = texture.height;
                 this.p = texture.GetPixels();
 
-                #if UNITY_WSA
-                this.textureHash = texture.imageContentsHash;
-                #else
-                this.textureHash = 
-                #endif
             }
 
             // Apply received values to asset
@@ -1904,7 +1898,22 @@ namespace UnityEngine
 
             public override string GetHash()
             {
-                return base.GetHash() + this.textureHash;
+                UInt64 colorHash = 1;
+                UInt64 p = 31;
+                foreach (Color c in this.p)
+                {
+                    unchecked
+                    {
+                        colorHash *= p;
+                        colorHash += (UInt64)c.r*255;
+                        colorHash *= p;
+                        colorHash += (UInt64)c.b * 255;
+                        colorHash *= p;
+                        colorHash += (UInt64)c.g * 255;
+                    }
+                }
+
+                return base.GetHash() + colorHash;
             }
         }
 
@@ -1943,7 +1952,7 @@ namespace UnityEngine
     /// <summary>
     /// Editor interface for public variables
     /// </summary>
-    #if UNITY_EDITOR
+#if UNITY_EDITOR
     [CustomEditor(typeof(NetworkModel))]
     public class MyScriptEditor : Editor
     {
@@ -2003,5 +2012,5 @@ namespace UnityEngine
             EditorGUI.indentLevel--;
         }
     }
-    #endif
-}   //A Space Odyssey
+#endif
+}
