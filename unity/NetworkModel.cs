@@ -29,7 +29,7 @@
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
  * @author Tobias Lunte
- * @version 2019-07-18
+ * @version 2019-07-22
  **/
 using System;
 using System.Collections.Generic;
@@ -1879,7 +1879,11 @@ namespace UnityEngine
                 this.h = texture.height;
                 this.p = texture.GetPixels();
 
+                #if UNITY_WSA
                 this.textureHash = texture.imageContentsHash;
+                #else
+                this.textureHash = 
+                #endif
             }
 
             // Apply received values to asset
@@ -1939,6 +1943,7 @@ namespace UnityEngine
     /// <summary>
     /// Editor interface for public variables
     /// </summary>
+    #if UNITY_EDITOR
     [CustomEditor(typeof(NetworkModel))]
     public class MyScriptEditor : Editor
     {
@@ -1998,4 +2003,5 @@ namespace UnityEngine
             EditorGUI.indentLevel--;
         }
     }
+    #endif
 }   //A Space Odyssey

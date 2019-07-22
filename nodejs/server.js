@@ -5,7 +5,8 @@
  *
  * @file server.js
  * @author Uwe Gruenefeld
- * @version 2017-05-11
+ * @author Tobias Lunte
+ * @version 2019-07-22
  **/
 
 var config		= require('./config.json');
