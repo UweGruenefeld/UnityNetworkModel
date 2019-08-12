@@ -11,6 +11,7 @@
  * - Light
  * - MeshFilter
  * - MeshRenderer
+ * - LineRenderer
  * - MeshCollider
  * - BoxCollider
  * - SphereCollider
@@ -29,7 +30,7 @@
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld
  * @author Tobias Lunte
- * @version 2019-07-22
+ * @version 2019-08-12
  **/
 using System;
 using System.Collections.Generic;

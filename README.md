@@ -7,7 +7,7 @@ Unity script and NodeJS server for synchronizing GameObjects with multiple Unity
 * Synchronizes any hierarchy depth of GameObjects
 * Updates only changed components of GameObjects
 * Update time interval is adjustable
-* Specify which components to sync (including Scripts, Transform, Camera, Light, MeshRenderer, MeshFilter, MeshCollider, BoxCollider, SphereCollider)
+* Specify which components to sync (including Scripts, Transform, Camera, Light, MeshFilter, MeshRenderer, LineRenderer, MeshCollider, BoxCollider, SphereCollider)
 * Extendable to support more components or to synchronize only specifc parts of components
 
 ## Install
