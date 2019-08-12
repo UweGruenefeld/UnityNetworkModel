@@ -64,6 +64,7 @@ namespace UnityEngine
         public bool LIGHT = true;
         public bool MESHFILTER = true;
         public bool MESHRENDERER = true;
+        public bool LINERENDERER = true;
         public bool MESHCOLLIDER = true;
         public bool BOXCOLLIDER = true;
         public bool SPHERECOLLIDER = true;
@@ -1556,6 +1557,84 @@ namespace UnityEngine
         }
 
         /// <summary>
+        /// Serializable LineRenderer
+        /// </summary>
+        [Serializable]
+        internal class LineRenderer : Component
+        {
+            public string m;
+            public Vector3[] p;
+            public float w;
+            public bool l;
+            public int ca, co;
+            public LineTextureMode t;
+            public Color cs, ce;
+
+            public LineRenderer(UnityEngine.Component component, AssetStore assetStore) : base(component)
+            {
+                UnityEngine.LineRenderer lineRenderer = (UnityEngine.LineRenderer)component;
+                if (lineRenderer.sharedMaterial == null)
+                {
+                    this.m = "null";
+                }
+                else
+                {
+                    lineRenderer.sharedMaterial.name = assetStore.GetReferenceName(lineRenderer.sharedMaterial);
+                    if (!assetStore.Contains(lineRenderer.sharedMaterial.name))
+                    {
+                        assetStore.Add(lineRenderer.sharedMaterial);
+                    }
+                    this.m = lineRenderer.sharedMaterial.name;
+                }
+                this.p = new Vector3[lineRenderer.positionCount];
+                lineRenderer.GetPositions(this.p);
+                this.w = lineRenderer.widthMultiplier;
+                this.l = lineRenderer.loop;
+                this.ca = lineRenderer.numCapVertices;
+                this.co = lineRenderer.numCornerVertices;
+                this.t = lineRenderer.textureMode;
+                this.cs = lineRenderer.startColor;
+                this.ce = lineRenderer.endColor;
+            }
+
+            public override bool Apply(UnityEngine.Component component, AssetStore assetStore)
+            {
+                AssetStore.AssetNode assetNode;
+                if (!assetStore.TryGet(this.m, typeof(UnityEngine.Material), out assetNode))
+                {
+                    return false;
+                }
+
+                UnityEngine.LineRenderer lineRenderer = (UnityEngine.LineRenderer)component;
+                lineRenderer.material = (UnityEngine.Material)assetNode.asset;
+                lineRenderer.positionCount = this.p.Length;
+                lineRenderer.SetPositions(this.p);
+                lineRenderer.widthMultiplier = this.w;
+                lineRenderer.loop = this.l;
+                lineRenderer.numCapVertices = this.ca;
+                lineRenderer.numCornerVertices = this.co;
+                lineRenderer.textureMode = this.t;
+                lineRenderer.startColor = this.cs;
+                lineRenderer.endColor = this.ce;
+
+                return true;
+            }
+
+            public override string GetHash()
+            {
+                StringBuilder hash = new StringBuilder();
+                hash.Append(base.GetHash());
+                foreach (Vector3 val in this.p)
+                {
+                    hash.Append(val.x);
+                    hash.Append(val.y);
+                    hash.Append(val.z);
+                }
+                return hash.ToString();
+            }
+        }
+
+        /// <summary>
         /// Serializable MeshCollider
         /// </summary>
         [Serializable]
@@ -1981,6 +2060,7 @@ namespace UnityEngine
                 nwm.LIGHT = EditorGUILayout.Toggle(new GUIContent("Light", "type, color, intensity, bounceIntensity"), nwm.LIGHT);
                 nwm.MESHFILTER = EditorGUILayout.Toggle(new GUIContent("MeshFilter", "mesh"), nwm.MESHFILTER);
                 nwm.MESHRENDERER = EditorGUILayout.Toggle(new GUIContent("MeshRenderer", "material"), nwm.MESHRENDERER);
+                nwm.LINERENDERER = EditorGUILayout.Toggle(new GUIContent("LineRenderer", "material, positions, widthMultiplier, loop, numCapVertices, numCornerVertices, textureMode, startColor, endColor"), nwm.LINERENDERER);
                 nwm.MESHCOLLIDER = EditorGUILayout.Toggle(new GUIContent("MeshCollider", "mesh"), nwm.MESHCOLLIDER);
                 nwm.BOXCOLLIDER = EditorGUILayout.Toggle(new GUIContent("BoxCollider", "center, size"), nwm.BOXCOLLIDER);
                 nwm.SPHERECOLLIDER = EditorGUILayout.Toggle(new GUIContent("SphereCollider", "center, radius"), nwm.SPHERECOLLIDER);
