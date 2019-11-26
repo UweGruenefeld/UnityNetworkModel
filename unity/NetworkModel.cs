@@ -109,6 +109,7 @@ namespace UnityEngine
 
         private void Update()
         {
+            Profiling.Profiler.BeginSample("NWMProf");
             //check if update period has passed
             this.time += Time.deltaTime;
             if (this.time > this.PERIOD)
@@ -160,6 +161,7 @@ namespace UnityEngine
                     }
                 };
             }
+            Profiling.Profiler.EndSample();
         }
     }
 
@@ -181,6 +183,7 @@ namespace UnityEngine
 
         public bool EnsureIsAlive()
         {
+            Profiling.Profiler.BeginSample("EnsureIsAlive");
             // If the websocket is not alive try to connect to the server
             if (!this.IsAlive)
             {
@@ -202,7 +205,7 @@ namespace UnityEngine
                     }
                 }
             }
-
+            Profiling.Profiler.EndSample();
             // Return if websocket is alive
             return this.IsAlive;
         }
@@ -273,6 +276,7 @@ namespace UnityEngine
         /// </summary>
         private void UpdateObjects()
         {
+            Profiling.Profiler.BeginSample("UpdateObjects");
             // List of outstanding requests from server
             while (requestQueue.Count > 0)
             {
@@ -313,6 +317,7 @@ namespace UnityEngine
             {
                 requestQueue.Enqueue(nextRequestQueue.Dequeue());
             }
+            Profiling.Profiler.EndSample();
         }
 
         /// <summary>
@@ -320,6 +325,8 @@ namespace UnityEngine
         /// </summary>
         private void UpdateHierarchy()
         {
+
+            Profiling.Profiler.BeginSample("UpdateHierarchy");
             // List of gameobjects that need an hierarchy update
             while (hierarchyQueue.Count > 0)
             {
@@ -355,6 +362,7 @@ namespace UnityEngine
                     this.hierarchyQueue.Enqueue(hierarchyUpdate);
                 }
             }
+            Profiling.Profiler.EndSample();
         }
 
         /// <summary>
@@ -487,6 +495,8 @@ namespace UnityEngine
         /// </summary>
         internal void TrackChanges()
         {
+
+            Profiling.Profiler.BeginSample("TrackChanges");
             // Add untracked elements to goStore as empty
             foreach (Transform transform in gameObject.GetComponentsInChildren<Transform>())
             {
@@ -533,7 +543,7 @@ namespace UnityEngine
                     // Iterate over tracked components of the node. 
                     List<Type> compToDelete = new List<Type>();
                     List<Serializer.Component> compToUpdate = new List<Serializer.Component>();
-                    foreach (KeyValuePair<Type, string> hashEntry in node.hashes)
+                    foreach (KeyValuePair<Type, long> hashEntry in node.hashes)
                     {
                         Component comp = node.gameObject.GetComponent(hashEntry.Key);
 
@@ -616,6 +626,7 @@ namespace UnityEngine
                 assetStore.Remove(assetName);
                 connection.SendRequest(Request.DeleteAsset(assetName, config));
             }
+            Profiling.Profiler.EndSample();
         }
 
         /// <summary>
@@ -753,7 +764,7 @@ namespace UnityEngine
             public GameObject gameObject;
             private Serializer serializer;
             public int parent;
-            public Dictionary<Type, string> hashes;
+            public Dictionary<Type, long> hashes;
 
             /// <summary>
             /// Wraps a GameObject into a Node
@@ -764,7 +775,7 @@ namespace UnityEngine
             {
                 this.gameObject = gameObject;
                 this.serializer = serializer;
-                this.hashes = new Dictionary<Type, string>();
+                this.hashes = new Dictionary<Type, long>();
             }
 
             /// <summary>
@@ -776,7 +787,7 @@ namespace UnityEngine
                 {
                     if (serializer.ShouldBeSerialized(component.GetType()) && !hashes.ContainsKey(component.GetType()))
                     {
-                        hashes.Add(component.GetType(), "");
+                        hashes.Add(component.GetType(), 0);
                     }
                 }
             }
@@ -931,7 +942,7 @@ namespace UnityEngine
             public string name;
             private Serializer serializer;
             public Type type;
-            public string hash = "";
+            public long hash = 0;
 
             /// <summary>
             /// Wraps an Asset into a Node
@@ -1314,6 +1325,11 @@ namespace UnityEngine
 
         }
 
+        internal static long CombineHashes(long h1, long h2)
+        {
+            return h1 * 31 + h2;
+        }
+
         /// <summary>
         /// Super class for all serializable Components
         /// </summary>
@@ -1327,13 +1343,13 @@ namespace UnityEngine
 
             abstract public bool Apply(UnityEngine.Component component, AssetStore assetStore);
 
-            public virtual string GetHash()
+            public virtual long GetHash()
             {
-                string hash = "";
+                long hash = 17;
                 FieldInfo[] fields = this.GetType().GetFields();
                 foreach (FieldInfo field in fields)
                 {
-                    hash += field.GetValue(this).ToString() + ":";
+                    hash = CombineHashes(hash, field.GetValue(this).GetHashCode());
                 }
                 return hash;
             }
@@ -1621,17 +1637,14 @@ namespace UnityEngine
                 return true;
             }
 
-            public override string GetHash()
+            public override long GetHash()
             {
-                StringBuilder hash = new StringBuilder();
-                hash.Append(base.GetHash());
+                long hash = base.GetHash();
                 foreach (Vector3 val in this.p)
                 {
-                    hash.Append(val.x);
-                    hash.Append(val.y);
-                    hash.Append(val.z);
+                    hash = CombineHashes(hash, val.GetHashCode());
                 }
-                return hash.ToString();
+                return hash;
             }
         }
 
@@ -1774,13 +1787,13 @@ namespace UnityEngine
                 return (Object)Activator.CreateInstance(commonType);
             }
 
-            public virtual string GetHash()
+            public virtual long GetHash()
             {
-                string hash = "";
+                long hash = 17;
                 FieldInfo[] fields = this.GetType().GetFields();
                 foreach (FieldInfo field in fields)
                 {
-                    hash += field.GetValue(this).ToString() + ":";
+                    hash = CombineHashes(hash, field.GetValue(this).GetHashCode());
                 }
                 return hash;
             }
@@ -1819,30 +1832,26 @@ namespace UnityEngine
                 return true;
             }
 
-            public override string GetHash()
+            public override long GetHash()
             {
-                StringBuilder hash = new StringBuilder();
-                hash.Append("v");
+                long hash = 17;
                 foreach (Vector3 val in this.v)
                 {
-                    hash.Append(val.ToString());
+                    hash = CombineHashes(hash, val.GetHashCode());
                 }
-                hash.Append("n");
                 foreach (Vector3 val in this.n)
                 {
-                    hash.Append(val.ToString());
+                    hash = CombineHashes(hash, val.GetHashCode());
                 }
-                hash.Append("u");
                 foreach (Vector2 val in this.u)
                 {
-                    hash.Append(val.ToString());
+                    hash = CombineHashes(hash, val.GetHashCode());
                 }
-                hash.Append("v");
                 foreach (int val in this.t)
                 {
-                    hash.Append(val.ToString());
+                    hash = CombineHashes(hash, val.GetHashCode());
                 }
-                return hash.ToString();
+                return hash;
             }
         }
 
@@ -1929,15 +1938,14 @@ namespace UnityEngine
                 return (Object)Activator.CreateInstance(commonType, args);
             }
 
-            public override string GetHash()
+            public override long GetHash()
             {
-                StringBuilder hash = new StringBuilder();
-                hash.Append(base.GetHash());
+                long hash = 17;
                 foreach (string val in this.k)
                 {
-                    hash.Append(val.ToString());
+                    hash = CombineHashes(hash, val.GetHashCode());
                 }
-                return hash.ToString();
+                return hash;
             }
         }
 
@@ -1976,24 +1984,16 @@ namespace UnityEngine
                 return new UnityEngine.Texture2D(this.w, this.h);
             }
 
-            public override string GetHash()
+            public override long GetHash()
             {
-                UInt64 colorHash = 1;
-                UInt64 p = 31;
+                long hash = base.GetHash();
                 foreach (Color c in this.p)
                 {
-                    unchecked
-                    {
-                        colorHash *= p;
-                        colorHash += (UInt64)c.r*255;
-                        colorHash *= p;
-                        colorHash += (UInt64)c.b * 255;
-                        colorHash *= p;
-                        colorHash += (UInt64)c.g * 255;
-                    }
+                    hash = CombineHashes(hash, c.r.GetHashCode());
+                    hash = CombineHashes(hash, c.g.GetHashCode());
+                    hash = CombineHashes(hash, c.b.GetHashCode());
                 }
-
-                return base.GetHash() + colorHash;
+                return hash;
             }
         }
 
