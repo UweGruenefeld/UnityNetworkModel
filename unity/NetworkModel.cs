@@ -701,7 +701,11 @@ namespace UnityEngine
                 GameObject go = null;
                 if (config.EXISTINGCOMP)
                 {
-                    go = FindTransform(config.transform, name).gameObject;
+                    Transform tmp = FindTransform(config.transform, name);
+                    if (tmp != null)
+                    {
+                        go = tmp.gameObject;
+                    }
                 }
                 if (go == null)
                 {
@@ -892,7 +896,7 @@ namespace UnityEngine
             if (this.Contains(assetName))
             {
                 AssetNode tmp = (AssetNode)this[assetName];
-                if (tmp.asset.GetType() == type)
+                if (tmp.asset != null && tmp.asset.GetType() == type)
                 {
                     node = tmp;
                     return true;
@@ -1906,7 +1910,6 @@ namespace UnityEngine
                 }
 
                 UnityEngine.Material material = (UnityEngine.Material)asset;
-
                 Shader shader = Shader.Find(this.n);
                 if (shader != null)
                 {
