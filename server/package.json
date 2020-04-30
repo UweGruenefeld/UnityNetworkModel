@@ -10,7 +10,7 @@
 	"bugs": {
 		"url": "https://github.com/UweGruenefeld/UnityNetworkModel/issues"
 	},
-	"dependencies" : {
+	"dependencies": {
 		"nodejs-websocket": "*"
 	},
 	"license": "MIT"

@@ -1,5 +1,6 @@
 {
-	"port" : 8080,
-	"debugSend": true,
-	"debugRec": true
+	"port": 8080,
+	"timestamp": false,
+	"debug": true,
+	"debugJSON": true
 }
