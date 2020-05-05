@@ -26,13 +26,14 @@ ehthumbs.db
 Thumbs.db
 
 # NodeJS files
-nodejs/node_modules/
-nodejs/package-lock.json
+server/nodejs/node_modules/
+server/nodejs/package-lock.json
 .npm
 npm-debug.log*
 
 # Visual Studio files
-unity/.vs/
+client/unity/.vs/
+client/unity/.vscode/
 *.csproj
 *.unityproj
 *.sln
@@ -48,12 +49,14 @@ unity/.vs/
 *.VC.db
 
 # Unity files
-unity/[Ll]ibrary/
-unity/[Tt]emp/
-unity/[Oo]bj/
-unity/[Bb]uild/
-unity/[Bb]uilds/
-unity/Assets/AssetStoreTools*
-unity/sysinfo.txt
+client/unity/[Bb]uild/
+client/unity/[Bb]uilds/
+client/unity/[Ll]ibrary/
+client/unity/[Ll]ogs/
+client/unity/[Oo]bj/
+client/unity/[Pp]ackages/
+client/unity/[Tt]emp/
+client/unity/Assets/AssetStoreTools*
+client/unity/sysinfo.txt
 *.pidb.meta
 *.pdb.meta

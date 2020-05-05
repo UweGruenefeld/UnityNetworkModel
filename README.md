@@ -53,14 +53,14 @@ node server.js
 -----
 ## Screenshots
 
-![Unity GUI with imported UnityNetworkModel Package](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/client/unity/screenshots/unity-gui.jpg?raw=true)
+![Unity GUI with imported UnityNetworkModel Package](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/showcase/unity-gui.jpg?raw=true)
 *Unity GUI with imported UnityNetworkModel Package*
 
-![UnityNetworkModel Configuration Component](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/client/unity/screenshots/unity-config.jpg?raw=true)
+![UnityNetworkModel Configuration Component](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/showcase/unity-config.jpg?raw=true)
 *UnityNetworkModel Configuration Component*
 
-![UnityNetworkModel Rule Component](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/client/unity/screenshots/unity-rules.jpg?raw=true)
+![UnityNetworkModel Rule Component](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/showcase/unity-rules.jpg?raw=true)
 *UnityNetworkModel Rule Component*
 
-![NodeJS server console output](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/server/nodejs/screenshots/nodejs-console.jpg?raw=true)
+![NodeJS server console output](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/showcase/nodejs-console.jpg?raw=true)
 *NodeJS server console output*
