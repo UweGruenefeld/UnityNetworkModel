@@ -130,9 +130,10 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 79726453}
+  - component: {fileID: 79726454}
   - component: {fileID: 79726452}
   m_Layer: 0
-  m_Name: GameObject
+  m_Name: NetworkModel
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -147,32 +148,42 @@ MonoBehaviour:
   m_GameObject: {fileID: 79726451}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 480c8df2b8eb3469e89ead44a4939bb1, type: 3}
+  m_Script: {fileID: 11500000, guid: d07266e346aa1d4408de093c015f09d6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  IP: 127.0.0.1
-  PORT: 8080
-  RECONNECT: 1
-  PERIOD: 0.1
-  RECEIVE: 1
-  SEND: 1
-  TIMESTAMP: 0
-  TRANSFORM: 1
-  CAMERA: 1
-  LIGHT: 1
-  MESHFILTER: 1
-  MESHRENDERER: 1
-  LINERENDERER: 1
-  MESHCOLLIDER: 1
-  BOXCOLLIDER: 1
-  SPHERECOLLIDER: 1
-  SCRIPTS: 1
-  RECEIVECHANNELS: default
-  EXISTINGCOMP: 0
-  EXISTINGRESOURCES: 0
-  SENDCHANNEL: default
-  DEBUGSEND: 0
-  DEBUGREC: 0
+  applyToObject: 0
+  applyToChildren: 1
+  decimalPlaces: 1
+  enableBoxCollider: 1
+  sendBoxCollider: 1
+  receiveBoxCollider: 1
+  enableCamera: 1
+  sendCamera: 1
+  receiveCamera: 1
+  enableLight: 1
+  sendLight: 1
+  receiveLight: 1
+  enableLineRenderer: 1
+  sendLineRenderer: 1
+  receiveLineRenderer: 1
+  enableMeshCollider: 1
+  sendMeshCollider: 1
+  receiveMeshCollider: 1
+  enableMeshFilter: 1
+  sendMeshFilter: 1
+  receiveMeshFilter: 1
+  enableMeshRenderer: 1
+  sendMeshRenderer: 1
+  receiveMeshRenderer: 1
+  enableScript: 1
+  sendScript: 1
+  receiveScript: 1
+  enableSphereCollider: 1
+  sendSphereCollider: 1
+  receiveSphereCollider: 1
+  enableTransform: 1
+  sendTransform: 1
+  receiveTransform: 1
 --- !u!4 &79726453
 Transform:
   m_ObjectHideFlags: 0
@@ -187,6 +198,41 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 2
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &79726454
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 79726451}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 93b7197a2cb765943aa63b41f39958a3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  IP: 127.0.0.1
+  PORT: 8080
+  RECONNECT: 1
+  DELAY: 0.1
+  TIME: 0
+  SEND: 1
+  RECEIVE: 1
+  EXISTINGOBJECTS: 0
+  EXISTINGRESOURCES: 0
+  SENDCHANNELS: default
+  RECEIVECHANNELS: default
+  enableMaterial: 1
+  sendMaterial: 1
+  receiveMaterial: 1
+  enableMesh: 1
+  sendMesh: 1
+  receiveMesh: 1
+  enableTexture2D: 1
+  sendTexture2D: 1
+  receiveTexture2D: 1
+  DEBUGLEVEL: 0
+  DEBUGSEND: 0
+  DEBUGRECEIVE: 0
 --- !u!1 &705507993
 GameObject:
   m_ObjectHideFlags: 0

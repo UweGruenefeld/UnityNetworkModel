@@ -4,39 +4,45 @@
  *
  * @file AbstractResourceClone.cs
  * @author Tobias Lunte, Uwe Gruenefeld
- * @version 2020-04-30
+ * @version 2020-05-04
+ *
  **/
 using System;
-using System.Reflection;
+using UnityEngine;
 
 namespace UnityNetworkModel
 {
     /// <summary>
-    /// Super class for all serializable Assets
+    /// Abstract class for all serializable Resources
     /// </summary>
     [Serializable]
     internal abstract class AbstractResource
     {
-        protected ResourceStore resourceStore;
-        protected abstract Type commonType { get; }
+        protected Injector injector;
 
         /// <summary>
-        /// Creates serializable Asset from Unity asset
+        /// Creates serializable Resource from Unity Resource
         /// </summary>
+        /// <param name="injector"></param>
         /// <param name="resource"></param>
-        /// <param name="resourceStore"></param>
-        public AbstractResource(System.Object resource, ResourceStore resourceStore)
+        public AbstractResource(Injector injector, UnityEngine.Object resource)
         {
-            this.resourceStore = resourceStore;
+            this.injector = injector;
         }
 
         /// <summary>
-        /// Applies parameters stored in serialized asset to Unity asset
+        /// Return common type of resource
         /// </summary>
-        /// <param name="resource"></param>
-        /// <param name="resourceStore"></param>
         /// <returns></returns>
-        abstract public bool Apply(System.Object resource, ResourceStore resourceStore);
+        abstract public Type commonType { get; }
+
+        /// <summary>
+        /// Applies parameters stored in serialized Resource to Unity Resource
+        /// </summary>
+        /// <param name="injector"></param>
+        /// <param name="resource"></param>
+        /// <returns></returns>
+        abstract public bool Apply(Injector injector, UnityEngine.Object resource);
 
         /// <summary>
         /// Create Unity resource of matching type, setting final parameters where necessary. Needs to be overwritten for resources using final parameters
@@ -48,22 +54,10 @@ namespace UnityNetworkModel
         }
 
         /// <summary>
-        /// Returns value-based, order-dependent hash. Needs to be overwritten for assets containing arrays
+        /// Returns value-based, order-dependent hash. Needs to be overwritten for resources
         /// </summary>
         /// <returns></returns>
-        public virtual long GetHash()
-        {
-            long hash = 17;
-            FieldInfo[] fields = this.GetType().GetFields();
-            foreach (FieldInfo field in fields)
-            {
-                if (!field.FieldType.IsArray)
-                {
-                    hash = Serializer.CombineHashes(hash, field.GetValue(this).GetHashCode());
-                }
-            }
-            return hash;
-        }
+        abstract public long GetHash();
     }
 }
 
@@ -77,16 +71,16 @@ namespace UnityNetworkModel
  *
  *     CLASS VARIABLES TO SYNCHRONIZE
  *     
- *     // Prepare component for sending to server
- *     public NAMEOFRESOURCEClone(System.Object resource, ResourceStore resourceStore) : base(resource, resourceStore)
+ *     // Prepare resource for sending to server
+ *     public NAMEOFRESOURCEClone(Injector injector, System.Object resource) : base(injector, resource)
  *     {
- *          SAVE VARIABLES FROM COMPONENT IN CLASS VARIABLES
+ *          SAVE VARIABLES FROM RESOURCE IN CLASS VARIABLES
  *     }
  *     
  *     // Apply received values to resource
- *     public override void Apply (System.Object resource, ResourceStore resourceStore)
+ *     public override void Apply (Injector injector, System.Object resource)
  *     {
- *          RESTORE CLASS VARIABLES INTO VARIABLES FROM COMPONENT
+ *          RESTORE CLASS VARIABLES INTO VARIABLES FROM RESOURCE
  *     }
  *     
  *     // Override if parameters need to be set during initialization
@@ -95,16 +89,11 @@ namespace UnityNetworkModel
  *     //      
  *     // }
  *     
- *     // Override if Resource contains arrays. Apply loop for each array
- *     // public override string GetHash() {}
- *     // {
- *     //      long hash = base.GetHash();
- *     //      foreach (ELEMENT val in ARRAY)
- *     //      {
- *     //          hash = Serializer.CombineHashes(hash, val.GetHashCode());
- *     //      }
- *     //      return hash;
- *     // }
+ *     // Returns value-based, order-dependent hash. Needs to be overwritten for resources
+ *     public override long GetHash()
+ *     {
+ *          COMBINE ALL VARIABLE HASHES
+ *     }
  * }
  *
  */

@@ -5,6 +5,7 @@
  * @file ObjectStore.cs
  * @author Uwe Gruenefeld, Tobias Lunte
  * @version 2020-04-30
+ *
  **/
 using System.Collections.Generic;
 using UnityEngine;
@@ -16,20 +17,22 @@ namespace UnityNetworkModel
     /// </summary>
     internal class ObjectStore : Dictionary<string, ObjectNode>
     {
-        private NetworkModel config;
-        private Bundle bundle;
+        private Injector injector;
 
-        public ObjectStore(NetworkModel config, Bundle bundle)
+        /// <summary>
+        /// Create a new ObjectStore
+        /// </summary>
+        /// <param name="injector"></param>
+        internal ObjectStore(Injector injector)
         {
-            this.config = config;
-            this.bundle = bundle;
+            this.injector = injector;
         }
 
         /// <summary>
         /// Adds GameObject to store
         /// </summary>
-        /// <param name="go"></param>
-        public void Add(GameObject gameObject)
+        /// <param name="gameobject"></param>
+        internal void Add(GameObject gameObject)
         {
             this.Add(gameObject.name, gameObject);
         }
@@ -38,10 +41,10 @@ namespace UnityNetworkModel
         /// Adds GameObject to store with specific name
         /// </summary>
         /// <param name="name"></param>
-        /// <param name="go"></param>
-        public void Add(string name, GameObject gameObject)
+        /// <param name="gameObject"></param>
+        internal void Add(string name, GameObject gameObject)
         {
-            this.Add(name, new ObjectNode(gameObject, this.bundle.serializer));
+            this.Add(name, new ObjectNode(this.injector, gameObject));
         }
 
         /// <summary>
@@ -52,31 +55,42 @@ namespace UnityNetworkModel
         /// </summary>
         /// <param name="name">Name of the gameObject</param>
         /// <returns>GameObject of matching name</returns>
-        public ObjectNode GetOrCreate(string name)
+        internal ObjectNode GetOrCreate(string name)
         {
             ObjectNode node;
 
-            // Name of gameobject is not existing
+            // Check if name of Gameobject is not existing
             if (!this.TryGetValue(name, out node))
             {
+                // Create a new GameObject
                 GameObject gameObject = null;
-                if (config.EXISTINGCOMPENTS)
+
+                // Should exisitng objects be preferred
+                if (this.injector.configuration.EXISTINGOBJECTS)
                 {
-                    Transform tmp = FindTransform(config.transform, name);
-                    if (tmp != null)
-                    {
-                        gameObject = tmp.gameObject;
-                    }
+                    // Try to find transform of specified GameObject
+                    Transform transform = FindTransform(this.injector.configuration.transform, name);
+                    if (transform != null)
+                        gameObject = transform.gameObject;
                 }
+
+                // If no GameObject was found
                 if (gameObject == null)
                 {
+                    // Create new GameOBject
                     gameObject = new GameObject();
                     gameObject.SetActive(false);
                     gameObject.name = name;
-                    gameObject.transform.parent = this["root"].gameObject.transform;
+
+                    // Attach new GameObject to root GameObject that contains the NetworkModel Configuration
+                    gameObject.transform.parent = this[Model.ROOT_NAME].gameObject.transform;
                 }
-                node = new ObjectNode(gameObject, this.bundle.serializer);
-                Add(name, node);
+
+                // Create new ObjectNode for GameObject
+                node = new ObjectNode(this.injector, gameObject);
+
+                // Add it to the ObjectStore
+                this.Add(name, node);
             }
 
             return node;
@@ -90,18 +104,20 @@ namespace UnityNetworkModel
         /// <returns>Transform of matching name</returns>
         private Transform FindTransform(Transform parent, string name)
         {
+            // Is the name of the parent equal to the name of the searched GameObject
             if (parent.name.Equals(name))
-            {
                 return parent;
-            }
+            
+            // Search through all children
             foreach (Transform child in parent)
             {
+                // Recrusive find transform
                 Transform result = FindTransform(child, name);
                 if (result != null)
-                {
                     return result;
-                }
             }
+
+            // No Transform found
             return null;
         }
 
@@ -109,16 +125,21 @@ namespace UnityNetworkModel
         /// Determine name that a gameObject should be stored under in the store. Will return current storage name if gameObject is already present or new free name if not. 
         /// GameObject's name should be set to returned name if it is to be stored.
         /// </summary>
-        /// <param name="go"></param>
+        /// <param name="gameObject"></param>
         /// <returns>Name the GameObject should be stored under</returns>
-        public string GetReferenceName(GameObject gameObject)
+        internal string GetReferenceName(GameObject gameObject)
         {
-            string refName = gameObject.name;
-            while (this.ContainsKey(refName) && this[refName].gameObject.GetInstanceID() != gameObject.GetInstanceID())
-            {
-                refName = refName + "_" + gameObject.GetInstanceID().ToString();
-            }
-            return refName;
+            // Check if object is null
+            if (gameObject == null)
+                return "null";
+
+            // Find the name of the Object
+            string referenceName = gameObject.name;
+            while (this.ContainsKey(referenceName) && this[referenceName].gameObject.GetInstanceID() != gameObject.GetInstanceID())
+                referenceName = referenceName + "_" + gameObject.GetInstanceID().ToString();
+            
+            // Return the Object name
+            return referenceName;
         }
     }
 }

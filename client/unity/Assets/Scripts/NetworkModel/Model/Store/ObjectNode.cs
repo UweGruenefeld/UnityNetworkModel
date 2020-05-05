@@ -4,7 +4,7 @@
  *
  * @file ObjectNode.cs
  * @author Uwe Gruenefeld, Tobias Lunte
- * @version 2020-04-30
+ * @version 2020-05-04
  **/
 using System;
 using System.Collections.Generic;
@@ -15,33 +15,72 @@ namespace UnityNetworkModel
     /// <summary>
     /// Stores specific GameObject, tracking its last known parent and components
     /// </summary>
-    internal class ObjectNode
+    internal class ObjectNode : AbstractInjector
     {
         public GameObject gameObject;
-        private Serializer serializer;
-        public int parent;
+        public int parentID;
         public Dictionary<Type, long> hashes;
 
         /// <summary>
         /// Wraps a GameObject into a Node
         /// </summary>
+        /// <param name="injector"></param>
         /// <param name="gameObject"></param>
-        /// <param name="serializer"></param>
-        public ObjectNode(GameObject gameObject, Serializer serializer)
+        internal ObjectNode(Injector injector, GameObject gameObject) : base(injector)
         {
             this.gameObject = gameObject;
-            this.serializer = serializer;
             this.hashes = new Dictionary<Type, long>();
         }
 
         /// <summary>
+        /// Update ObjectNode with current values from represented GameObject
+        /// </summary>
+        internal void Update()
+        {
+            // Update stored parent with current parent ID
+            this.parentID = gameObject.transform.parent.GetInstanceID();
+
+            // Add all Components to Dictonary containing hashes
+            foreach (Component component in gameObject.GetComponents(typeof(Component)))
+            {
+                // If Component does not exist in Dictonary, then add it
+                if (!this.hashes.ContainsKey(component.GetType()))
+                    this.hashes.Add(component.GetType(), 0);
+            }
+        }
+
+        /// <summary>
+        /// Update specific component hash to current state
+        /// </summary>
+        /// <param name="type">Type of component to update</param>
+        internal void UpdateComponent(Type type)
+        {
+            Component component = gameObject.GetComponent(type);
+
+            if (component != null)
+                this.hashes[type] = this.injector.serializer.ToSerializableComponent(component).GetHash();
+        }
+
+        /// <summary>
+        /// Remove tracking for component of specific Type
+        /// </summary>
+        /// <param name="type"></param>
+        internal void RemoveComponent(Type type)
+        {
+            this.hashes.Remove(type);
+        }
+
+
+
+/*
+        /// <summary>
         /// Add missing hashes to component Dictionary as empty == unknown
         /// </summary>
-        public void PopulateHashes()
+        internal void PopulateHashes()
         {
             foreach (Component component in gameObject.GetComponents(typeof(Component)))
             {
-                if (serializer.ShouldBeSerialized(component.GetType()) && !hashes.ContainsKey(component.GetType()))
+                if (HierarchyUtility.FindRule(this.injector, this.gameObject, component.GetType(), UpdateType.SEND) && !hashes.ContainsKey(component.GetType()))
                 {
                     hashes.Add(component.GetType(), 0);
                 }
@@ -51,7 +90,7 @@ namespace UnityNetworkModel
         /// <summary>
         /// Update stored parent to current state
         /// </summary>
-        public void UpdateParent()
+        internal void UpdateParent()
         {
             this.parent = gameObject.transform.parent.GetInstanceID();
         }
@@ -60,14 +99,14 @@ namespace UnityNetworkModel
         /// Update specific component hash to current state
         /// </summary>
         /// <param name="type">Type of component to update</param>
-        public void UpdateHash(Type type)
+        internal void UpdateHash(Type type)
         {
-            if (serializer.ShouldBeSerialized(type))
+            if (HierarchyUtility.FindRule(this.injector, this.gameObject, type, UpdateType.SEND))
             {
                 Component component = gameObject.GetComponent(type);
                 if (component != null)
                 {
-                    hashes[type] = serializer.ToSerializableComponent(component).GetHash();
+                    hashes[type] = this.injector.serializer.ToSerializableComponent(component).GetHash();
                 }
             }
         }
@@ -76,20 +115,14 @@ namespace UnityNetworkModel
         /// Update specific component hash to current state
         /// UpdateHash(Type type) should always be preferred, if possible.
         /// </summary>
-        /// <param name="comp">serialized component to update</param>
-        public void UpdateHash(AbstractComponent comp)
+        /// <param name="component">serialized component to update</param>
+        internal void UpdateHash(AbstractComponent component)
         {
-            hashes[serializer.GetCommonType(comp)] = comp.GetHash();
+            hashes[this.injector.serializer.GetCommonType(component)] = component.GetHash();
         }
 
-        /// <summary>
-        /// Remove tracking for component of specific Type
-        /// </summary>
-        /// <param name="type"></param>
-        public void RemoveHash(Type type)
-        {
-            hashes.Remove(type);
-        }
+
+        */
 
         /// <summary>
         /// Returns matching Component by priority
@@ -98,12 +131,16 @@ namespace UnityNetworkModel
         /// </summary>
         /// <param name="type"></param>
         /// <returns>Component of matching Type</returns>
-        public Component GetOrCreateComponent(Type type)
+        internal Component GetOrCreateComponent(Type type)
         {
+            // Get component of specified type
             Component component = gameObject.GetComponent(type);
+
+            // If no component was found, then add component
             if (component == null)
                     component = gameObject.AddComponent(type);
 
+            // Return the component
             return component;
         }
     }

@@ -4,7 +4,8 @@
  *
  * @file Model.cs
  * @author Uwe Gruenefeld, Tobias Lunte
- * @version 2020-04-30
+ * @version 2020-05-05
+ *
  **/
 using System;
 using System.Collections.Generic;
@@ -16,12 +17,12 @@ namespace UnityNetworkModel
     /// Models known state of synchronezed part of the scene. Applies changes as they are requested (if receiving) 
     /// and periodically checks for new changes to request (if sending).
     /// </summary>
-    class Model : MonoBehaviour
+    internal class Model : MonoBehaviour
     {
-        GameObject root;
+        internal static string ROOT_NAME = "root";
+        internal static int ATTEMPTS_TO_UPDATE = 5;
 
-        private NetworkModel config;
-        private Bundle bundle;
+        private Injector injector;
 
         // Queue of requests to be applied during the next update loop
         private Queue<Request> requestQueue;
@@ -33,21 +34,13 @@ namespace UnityNetworkModel
         /// <summary>
         /// Faux-constructor since Monobehaviours may not be constructed traditionally.
         /// </summary>
-        /// <param name="root">Same GameObject as NetworkModel</param>
-        /// <param name="objectStore"></param>
-        /// <param name="resourceStore"></param>
-        /// <param name="connection"></param>
-        /// <param name="serializer"></param>
-        /// <param name="config">NetworkModel</param>
-        /// <returns>New Model attached to root</returns>
-        public static Model CreateModel(NetworkModel config, Bundle bundle, GameObject root)
+        /// <param name="injector"></param>
+        /// <returns>new model</returns>
+        internal static Model CreateModel(Injector injector)
         {
-            Model model = root.AddComponent<Model>();
+            Model model = injector.configuration.gameObject.AddComponent<Model>();
 
-            model.config = config;
-            model.bundle = bundle;
-            //this.root = root;
-            //model.root = root;
+            model.injector = injector;
 
             model.requestQueue = new Queue<Request>();
             model.nextRequestQueue = new Queue<Request>();
@@ -56,15 +49,198 @@ namespace UnityNetworkModel
             return model;
         }
 
-        public void AddRequest(Request request)
+        /// <summary>
+        /// Add Request to queue
+        /// </summary>
+        /// <param name="request"></param>
+        internal void AddRequest(Request request)
         {
             this.requestQueue.Enqueue(request);
         }
 
         /// <summary>
+        /// Check synchronized part of scene for changes in GameObjects, Components or Resources.
+        /// </summary>
+        internal void TrackChanges()
+        {
+            // Add untracked GameObjects to ObjectStore as Objects without Components
+            foreach (Transform transform in this.gameObject.GetComponentsInChildren<Transform>())
+            {
+                // Make sure that GameObject with NetworkModel attached does not get synced to Server
+                if (transform != this.gameObject.transform)
+                {
+                    // Get existing reference or create a unique reference for GameObject
+                    transform.gameObject.name = this.injector.objectStore.GetReferenceName(transform.gameObject);
+
+                    // Check if GameObject is already in ObjectStore
+                    if (!this.injector.objectStore.ContainsKey(transform.gameObject.name))
+                        this.injector.objectStore.Add(transform.gameObject);
+                }
+            }
+
+            // List of GameObjects that have been deleted on this client
+            List<string> objectsToDelete = new List<string>();
+
+            // Iterate over GameObject Store
+            foreach (KeyValuePair<string, ObjectNode> objectEntry in this.injector.objectStore)
+            {
+                // Never synchronize the root gameobject containing the NetworkModel
+                string referenceName = objectEntry.Key;
+                if (referenceName == Model.ROOT_NAME)
+                    continue;
+
+                // If Element does not exist anymore (or the name was changed), then add it to the list to schedule the deletion
+                // (When changing the name of a GameObject, the ObjectNode of that GameOBject gets destroyed and a new ObjectNode is created)
+                ObjectNode node = objectEntry.Value;
+                if (node.gameObject == null || node.gameObject.name != referenceName)
+                    objectsToDelete.Add(referenceName);
+
+                // Else, check for changes in hierarchy and components
+                else
+                {
+                    // Check if parent of gameObject has changed compared to last known state
+                    if (node.gameObject.transform.parent.GetInstanceID() != node.parentID)
+                    {
+                        // Send updated parent information to server
+                        this.injector.connection.SendRequest(Request.UpdateObject(this.injector, node.gameObject));
+                        node.gameObject.transform.hasChanged = false;
+                    }
+
+                    // Update Node with current values from represented GameObject
+                    node.Update();
+
+                    // List of Components that have been deleted on this client
+                    List<Type> deletedComponents = new List<Type>();
+                    // List of Components that have been deleted and inform the server about it
+                    List<Type> sendDeletedComponents = new List<Type>();
+
+                    // List of Components that have been changed on this client
+                    List<AbstractComponent> updatedComponents = new List<AbstractComponent>();
+                    // List of Components that have been changed and inform the server about it
+                    List<AbstractComponent> sendUpdatedComponents = new List<AbstractComponent>();
+
+                    // Iterate over tracked components of the node
+                    foreach (KeyValuePair<Type, long> hashEntry in node.hashes)
+                    {
+                        // Get the component which is pointed at in this loop
+                        Component component = node.gameObject.GetComponent(hashEntry.Key);
+
+                        // If component is allowed to send, then track changes
+                        bool send = RuleUtility.FindComponentRule(this.injector, node.gameObject, component.GetType(), UpdateType.SEND);
+
+                        // If Component does not exist anymore, then schedule it for deletion
+                        if (component == null)
+                        {
+                            // Delete references to component on client
+                            Type type = this.injector.serializer.ToSerializableType(hashEntry.Key);
+                            deletedComponents.Add(type);
+
+                            // Inform the server about the change
+                            if (send)
+                                sendDeletedComponents.Add(type);
+
+                            continue;
+                        }
+
+                        // Transform UnityEngine Component to NetworkModel AbstractComponent
+                        AbstractComponent serializedComponent = this.injector.serializer.ToSerializableComponent(component);
+
+                        // Generate hash of component and compare it to the previously stored value; if not equal, then add it to update list
+                        if (serializedComponent.GetHash() != hashEntry.Value)
+                        {
+                            // Update hash stored for component on client
+                            updatedComponents.Add(serializedComponent);
+
+                            // Inform the server about the change
+                            if (send)
+                                sendUpdatedComponents.Add(serializedComponent);
+                        }
+                    }
+
+                    // Components scheduled for Delete
+                    foreach (Type type in deletedComponents)
+                        node.RemoveComponent(this.injector.serializer.ToCommonType(type));
+
+                    // Components scheduled for Update
+                    foreach (AbstractComponent component in updatedComponents)
+                        node.UpdateComponent(component.commonType);
+
+                    // Check if there are deleted components the server needs to be informed about
+                    if (sendDeletedComponents.Count > 0)
+                        this.injector.connection.SendRequest(Request.DeleteComponents(this.injector, referenceName, sendDeletedComponents));
+
+                    // Check if there are updated components the server needs to be informed about
+                    if (sendUpdatedComponents.Count > 0)
+                    {
+                        this.injector.connection.SendRequest(Request.UpdateComponents(this.injector, referenceName, sendUpdatedComponents));
+
+                        //TODO figure out what next line does
+                        node.gameObject.transform.hasChanged = false;
+                    }
+                }
+            }
+
+            // Delete scheduled GameObjects and send Delete Request
+            foreach (string referenceName in objectsToDelete)
+            {
+                this.injector.objectStore.Remove(referenceName);
+                this.injector.connection.SendRequest(Request.DeleteObject(this.injector, referenceName));
+            }
+
+            // List of Resources that have been deleted on this client
+            List<string> resourcesToDelete = new List<string>();
+
+            // Iterate over Resource Store
+            for (int i = 0; i < this.injector.resourceStore.Count; i++)
+            {
+                // Get the resource which is pointed at in this loop
+                ResourceNode node = (ResourceNode)this.injector.resourceStore[i];
+                string resourceName = node.name;
+
+                // If resource name is null, then check next resource
+                if (resourceName == "null")
+                    continue;
+
+                // If resource is allowed to send, then track changes
+                bool send = RuleUtility.FindResourceRule(this.injector, node.type, UpdateType.SEND);
+
+                // If Element does not exist anymore, then schedule it for deletion
+                if (node.resource == null || node.resource.name != resourceName || node.resource.GetType() != node.type)
+                {
+                    // Delete references to resource on client
+                    resourcesToDelete.Add(resourceName);
+
+                    // Inform the server about the change
+                    if (send)
+                        this.injector.connection.SendRequest(Request.DeleteResource(this.injector, resourceName));
+                }
+                // Else, check for changes
+                else
+                {
+                    // Transform UnityEngine Resource to NetworkModel AbstractResource
+                    AbstractResource serializedResource = this.injector.serializer.ToSerializableResource(node.resource);
+                    if (serializedResource.GetHash() != node.hash)
+                    {
+                        // Inform the server about the change
+                        if (send)
+                            this.injector.connection.SendRequest(Request.UpdateResource(this.injector, resourceName,
+                                this.injector.serializer.ToSerializableType(node.type), serializedResource));
+
+                        // Update hash stored for resource on client
+                        node.UpdateHash();
+                    }
+                }
+            }
+
+            // Delete resources scheduled for deleting from ResourceStore
+            foreach (string resourceName in resourcesToDelete)
+                this.injector.resourceStore.Remove(resourceName);
+        }
+
+        /// <summary>
         /// Apply outstanding changes to scene.
         /// </summary>
-        public void ApplyChanges()
+        internal void ApplyChanges()
         {
             UpdateObjects();
             UpdateHierarchy();
@@ -80,40 +256,206 @@ namespace UnityNetworkModel
             {
                 // Get next Request
                 Request request = this.requestQueue.Dequeue();
+
+                // If request does not contain the name of a subscribed channel, then continue with next request
+                if (!this.injector.subscriptions.receiveChannelList.Contains(request.channel))
+                    continue;
+
+                // Continue dependent on content of request
                 switch (request.messageType + request.updateType)
                 {
-                    case Request.RESOURCE + Request.UPDATE:
-                        UpdateResource(request);
-                        break;
-                    case Request.RESOURCE + Request.DELETE:
-                        DeleteResource(request.name);
-                        break;
+                    // Update GameObject    
                     case Request.OBJECT + Request.UPDATE:
+
                         // Enqueue GameObject to be sorted into hierarchy, creating it if neccessary.
-                        ObjectNode node = this.bundle.objectStore.GetOrCreate(request.name);
+                        ObjectNode node = this.injector.objectStore.GetOrCreate(request.name);
                         node.gameObject.SetActive(false);
                         node.gameObject.transform.hasChanged = false;
                         this.hierarchyQueue.Enqueue(new HierarchyUpdate(node, request.parent));
                         break;
+
+                    // Delete GameObject
                     case Request.OBJECT + Request.DELETE:
                         DeleteObject(request.name);
                         break;
+
+                    // Update Resource
+                    case Request.RESOURCE + Request.UPDATE:
+                        UpdateResource(request);
+                        break;
+
+                    // Delete Resource
+                    case Request.RESOURCE + Request.DELETE:
+                        DeleteResource(request);
+                        break;
+
+                    // Update Component
                     case Request.COMPONENT + Request.UPDATE:
                         UpdateComponents(request);
                         break;
+
+                    // Delete Component
                     case Request.COMPONENT + Request.DELETE:
-                        foreach (Type type in request.componentTypes)
-                        {
-                            DeleteComponent(request.name, type);
-                        }
+                        DeleteComponents(request);
                         break;
                 }
             }
 
             // Schedule currently unfulfillable requests for next update.
             while (nextRequestQueue.Count > 0)
-            {
                 requestQueue.Enqueue(nextRequestQueue.Dequeue());
+        }
+
+        /// <summary>
+        /// Explicitly delete Gameobject from scene and remove it from tracked store.
+        /// </summary>
+        /// <param name="name"></param>
+        private void DeleteObject(string name)
+        {
+            ObjectNode node;
+            if (this.injector.objectStore.TryGetValue(name, out node))
+            {
+                Destroy(node.gameObject);
+                this.injector.objectStore.Remove(name);
+            }
+        }
+
+        /// <summary>
+        /// Update content of Resource, creating it if necessary.
+        /// </summary>
+        /// <param name="request"></param>
+        private void UpdateResource(Request request)
+        {
+            // Get Unity Type of Resource
+            Type commonType = this.injector.serializer.ToCommonType(request.resourceType);
+
+            // If resource is not allowed to receive update, then drop request
+            if(!RuleUtility.FindResourceRule(this.injector, commonType, UpdateType.RECEIVE))
+                return;
+
+            ResourceNode node;
+            if (this.injector.resourceStore.TryGet(request.name, commonType, out node))
+            {
+                // If Resource exists, try to apply updates. If successful, request is fulfilled.
+                if (request.resource.Apply(this.injector, node.resource))
+                    return;
+            }
+            else
+            {
+                // If Resource doesn't exist, create it and try to apply updates. If successful, request is fulfilled.
+                UnityEngine.Object resource = request.resource.Construct();
+                if (request.resource.Apply(this.injector, resource))
+                {
+                    resource.name = request.name;
+                    this.injector.resourceStore.Add(resource);
+                    return;
+                }
+            }
+
+            // Resource creation was not successful in this update
+
+            // If this request was handled less than five times, then try in an later update loop
+            if (request.iteration < Model.ATTEMPTS_TO_UPDATE)
+            {
+                request.iteration++;
+                nextRequestQueue.Enqueue(request);
+            }
+            // Else, report failed resource update
+            else
+                LogUtility.Log(this.injector, LogType.WARNING, "Missing resource update needed for " + request.name);
+        }
+
+        /// <summary>
+        /// Remove Resource from tracked store. Will only be garbage-collected if no other resource uses it.
+        /// </summary>
+        /// <param name="request"></param>
+        private void DeleteResource(Request request)
+        {
+            // Get Unity Type of Resource
+            Type commonType = this.injector.serializer.ToCommonType(request.resourceType);
+
+            // If resource is not allowed to receive update, then drop request
+            if(!RuleUtility.FindResourceRule(this.injector, commonType, UpdateType.RECEIVE))
+                return;
+
+            // If ResourceStore contains Resource, then remove it
+            if (this.injector.resourceStore.Contains(name))
+                this.injector.resourceStore.Remove(name);
+        }
+
+        /// <summary>
+        /// Update components in GameObject, creating them if necessary.
+        /// </summary>
+        /// <param name="request"></param>
+        private void UpdateComponents(Request request)
+        {
+            // Find a node of the correct gameobject for the request to use, creating it if it doesn't exist yet.
+            ObjectNode node = this.injector.objectStore.GetOrCreate(request.name);
+
+            // Update the components
+            foreach (AbstractComponent serializedComponent in request.components)
+            {
+                Type type = this.injector.serializer.GetCommonType(serializedComponent);
+                if (type != null)
+                {
+                    // If component is not allowed to receive update, then drop request
+                    if(!RuleUtility.FindComponentRule(this.injector, node.gameObject, type, UpdateType.RECEIVE))
+                        continue;
+
+                    // Get or create the component
+                    Component component = node.GetOrCreateComponent(type);
+
+                    // Try to apply updates; if successful, request is fulfilled
+                    if (serializedComponent.Apply(this.injector, component))
+                    {
+                        node.UpdateComponent(type);
+                        continue;
+                    }
+
+                    // Component creation was not successful in this update
+
+                    // Create Request to try in a later update
+                    Request newRequest = Request.UpdateComponents(this.injector, request.name, new List<AbstractComponent>() { serializedComponent });
+
+                    // If this request was handled less than five times, then try in an later update loop
+                    if (newRequest.iteration < Model.ATTEMPTS_TO_UPDATE)
+                    {
+                        // Integrate the iterations of the old request
+                        newRequest.iteration = request.iteration + 1;
+                        nextRequestQueue.Enqueue(newRequest);
+                    }
+                    // Else, report failed resource update
+                    else
+                        LogUtility.Log(this.injector, LogType.WARNING, "Missing component update needed for " + request.name);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Explicitly delete Component from Gameobject and remove it from tracked store.
+        /// </summary>
+        /// <param name="name">Name of containing gameobject</param>
+        /// <param name="type">Type of component to remove</param>
+        private void DeleteComponents(Request request)
+        {
+             ObjectNode node;
+            if (this.injector.objectStore.TryGetValue(request.name, out node))
+            {
+                foreach (Type t in request.componentTypes)
+                {
+                    Type type = this.injector.serializer.ToCommonType(t);
+                    if (type != null)
+                    {
+                        // If component is not allowed to receive update, then drop request
+                        if(!RuleUtility.FindComponentRule(this.injector, node.gameObject, type, UpdateType.RECEIVE))
+                        continue;
+
+                        // Remove component
+                        Component component = node.gameObject.GetComponent(type);
+                        node.RemoveComponent(this.injector.serializer.ToCommonType(type));
+                        Destroy(component);
+                    }
+                }
             }
         }
 
@@ -122,7 +464,6 @@ namespace UnityNetworkModel
         /// </summary>
         private void UpdateHierarchy()
         {
-            
             // List of gameobjects that need an hierarchy update
             while (hierarchyQueue.Count > 0)
             {
@@ -131,7 +472,7 @@ namespace UnityNetworkModel
 
                 // Check if requested parent is known. If so, set gameObject to be child of parent
                 ObjectNode node;
-                if (this.bundle.objectStore.TryGetValue(hierarchyUpdate.parent, out node))
+                if (this.injector.objectStore.TryGetValue(hierarchyUpdate.parent, out node))
                 {
                     Transform parent = node.gameObject.transform;
                     Transform transform = hierarchyUpdate.node.gameObject.transform;
@@ -150,300 +491,11 @@ namespace UnityNetworkModel
 
                     hierarchyUpdate.node.gameObject.SetActive(true);
                     hierarchyUpdate.node.gameObject.transform.hasChanged = false;
-                    hierarchyUpdate.node.UpdateParent();
+                    hierarchyUpdate.node.Update();
                 }
                 else
-                // else, re-enqueue request for later
-                {
+                    // else, re-enqueue request for later
                     this.hierarchyQueue.Enqueue(hierarchyUpdate);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Update content of Resource, creating it if necessary.
-        /// </summary>
-        /// <param name="request"></param>
-        private void UpdateResource(Request request)
-        {
-            ResourceNode node;
-            if (this.bundle.resourceStore.TryGet(request.name, this.bundle.serializer.ToCommonType(request.resourceType), out node))
-            {
-                // If Resource exists, try to apply updates. If successful, request is fulfilled.
-                if (request.resource.Apply(node.resource, this.bundle.resourceStore))
-                {
-                    return;
-                }
-            }
-            else
-            {
-                // If Resource doesn't exist, create it and try to apply updates. If successful, request is fulfilled.
-                UnityEngine.Object resource = request.resource.Construct();
-                if (request.resource.Apply(resource, this.bundle.resourceStore))
-                {
-                    resource.name = request.name;
-                    this.bundle.resourceStore.Add(resource);
-                    return;
-                }
-            }
-
-            // If creation / update wasn't successful above, schedule the request to try again later; either in the current or a following update loop.
-            if (request.iteration < 5)
-            {
-                request.iteration++;
-                requestQueue.Enqueue(request);
-            }
-            else
-            {
-                request.iteration = 0;
-                nextRequestQueue.Enqueue(request);
-                Debug.LogWarning("NetworkModel: Missing asset update needed for " + request.name);
-            }
-        }
-
-        /// <summary>
-        /// Update components in GameObject, creating them if necessary.
-        /// </summary>
-        /// <param name="request"></param>
-        private void UpdateComponents(Request request)
-        {
-            // Find a node of the correct gameobject for the request to use, creating it if it doesn't exist yet.
-            ObjectNode node = this.bundle.objectStore.GetOrCreate(request.name);
-
-            // Update the components
-            foreach (AbstractComponent serializedComponent in request.components)
-            {
-                Type type = this.bundle.serializer.GetCommonType(serializedComponent);
-                if (type != null)
-                {
-                    Component component = node.GetOrCreateComponent(type);
-                    if (serializedComponent.Apply(component, this.bundle.resourceStore))
-                    {
-                        node.UpdateHash(type);
-                    }
-                    else
-                    {
-                        Request newReq = Request.UpdateComponents(request.name, new List<AbstractComponent>() { serializedComponent }, config);
-                        if (request.iteration < 5)
-                        {
-                            newReq.iteration = request.iteration + 1;
-                            requestQueue.Enqueue(newReq);
-                        }
-                        else
-                        {
-                            nextRequestQueue.Enqueue(newReq);
-                            Debug.LogWarning("NetworkModel: Missing resource update needed for " + request.name + "." + type);
-                        }
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Remove Resource from tracked store. Will only be garbage-collected if no other resource uses it.
-        /// </summary>
-        /// <param name="name"></param>
-        private void DeleteResource(string name)
-        {
-            if (this.bundle.resourceStore.Contains(name))
-            {
-                this.bundle.resourceStore.Remove(name);
-            }
-        }
-
-        /// <summary>
-        /// Explicitly delete Gameobject from scene and remove it from tracked store.
-        /// </summary>
-        /// <param name="name"></param>
-        private void DeleteObject(string name)
-        {
-            ObjectNode node;
-            if (this.bundle.objectStore.TryGetValue(name, out node))
-            {
-                Destroy(node.gameObject);
-                this.bundle.objectStore.Remove(name);
-            }
-        }
-
-        /// <summary>
-        /// Explicitly delete Component from Gameobject and remove it from tracked store.
-        /// </summary>
-        /// <param name="name">Name of containing gameobject</param>
-        /// <param name="type">Type of component to remove</param>
-        private void DeleteComponent(string name, Type type)
-        {
-            ObjectNode node;
-            if (this.bundle.objectStore.TryGetValue(name, out node))
-            {
-                type = this.bundle.serializer.ToCommonType(type);
-                if (type != null)
-                {
-                    Component comp = node.gameObject.GetComponent(type);
-                    node.RemoveHash(this.bundle.serializer.ToCommonType(type));
-                    Destroy(comp);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Check synchronized part of scene for changes in GameObjects, Components or Resources.
-        /// </summary>
-        internal void TrackChanges()
-        {
-            // Add untracked elements to goStore as empty
-            foreach (Transform transform in gameObject.GetComponentsInChildren<Transform>())
-            {
-                if (transform != gameObject.transform)
-                {
-                    transform.gameObject.name = this.bundle.objectStore.GetReferenceName(transform.gameObject);
-                    if (!this.bundle.objectStore.ContainsKey(transform.gameObject.name))
-                    {
-                        this.bundle.objectStore.Add(transform.gameObject);
-                    }
-                }
-            }
-
-            // Iterate over GameObject Store
-            List<string> objectsToDelete = new List<string>();
-            foreach (KeyValuePair<string, ObjectNode> objectEntry in this.bundle.objectStore)
-            {
-                // Never synchronize the root gameobject containing the NetworkModel
-                string referenceName = objectEntry.Key;
-                if (referenceName == "root")
-                {
-                    continue;
-                }
-
-                // If Element doesn't exist anymore, schedule it for deletion
-                ObjectNode node = objectEntry.Value;
-                if (node.gameObject == null || node.gameObject.name != referenceName)
-                {
-                    objectsToDelete.Add(referenceName);
-                }
-
-                // Else, check for changes in hierarchy and components
-                else
-                {
-                    // Check if parent of gameObject has changed compared to last known state
-                    if (node.gameObject.transform.parent.GetInstanceID() != node.parent)
-                    {
-                        this.bundle.connection.SendRequest(Request.UpdateObject(node.gameObject, config));
-                        node.gameObject.transform.hasChanged = false;
-                        node.UpdateParent();
-                    }
-
-                    // Add missing components to the node's dictionary of tracked components as unknown
-                    node.PopulateHashes();
-
-                    // Iterate over tracked components of the node. 
-                    List<Type> compToDelete = new List<Type>();
-                    List<AbstractComponent> compToUpdate = new List<AbstractComponent>();
-                    foreach (KeyValuePair<Type, long> hashEntry in node.hashes)
-                    {
-                        Component comp = node.gameObject.GetComponent(hashEntry.Key);
-
-                        // If Component doesn't exist anymroe, schedule it for deletion
-                        if (comp == null)
-                        {
-                            Type type = this.bundle.serializer.ToSerializableType(hashEntry.Key);
-                            compToDelete.Add(type);
-                        }
-
-                        // Else if component has changed in way tracked by serializer, schedule it for update
-                        else
-                        {
-                            AbstractComponent serComp = this.bundle.serializer.ToSerializableComponent(comp);
-                            if (serComp.GetHash() != hashEntry.Value)
-                            {
-                                compToUpdate.Add(serComp);
-                            }
-                        }
-                    }
-
-                    // Delete scheduled components and send Delete Request
-                    foreach (Type type in compToDelete)
-                    {
-                        node.RemoveHash(this.bundle.serializer.ToCommonType(type));
-                    }
-
-                    if (compToDelete.Count > 0)
-                    {
-                        this.bundle.connection.SendRequest(Request.DeleteComponents(referenceName, compToDelete, config));
-                    }
-
-                    // Update scheduled components and send Update Request
-                    foreach (AbstractComponent comp in compToUpdate)
-                    {
-                        node.UpdateHash(comp);
-                    }
-
-                    if (compToUpdate.Count > 0)
-                    {
-                        this.bundle.connection.SendRequest(Request.UpdateComponents(referenceName, compToUpdate, config));
-                        node.gameObject.transform.hasChanged = false;
-                    }
-                }
-            }
-
-            // Delete scheduled GameObjects and send Delete Request
-            foreach (string referenceName in objectsToDelete)
-            {
-                this.bundle.objectStore.Remove(referenceName);
-                this.bundle.connection.SendRequest(Request.DeleteObject(referenceName, config));
-            }
-
-            // Missing Resources were added while updating components (in AbstractComponent..ctor's)
-            // Iterate over resourceStore. More Resources may be added to the end of the OrderedDictionary resourceStore during iteration; so a for (int i) loop is used instead of enumerators.
-            List<string> resourcesToDelete = new List<string>();
-            for (int i = 0; i < this.bundle.resourceStore.Count; i++)
-            {
-                ResourceNode node = (ResourceNode)this.bundle.resourceStore[i];
-                string resourceName = node.name;
-                if (resourceName == "null")
-                {
-                    continue;
-                }
-
-                // If Element doesn't exist anymore, schedule it for deletion
-                if (node.resource == null || node.resource.name != resourceName || node.resource.GetType() != node.type)
-                {
-                    resourcesToDelete.Add(resourceName);
-                }
-
-                // Else, check for changes
-                else
-                {
-                    AbstractResource serResource = this.bundle.serializer.ToSerializableResource(node.resource);
-                    if (serResource.GetHash() != node.hash)
-                    {
-                        this.bundle.connection.SendRequest(
-                            Request.UpdateResource(resourceName, this.bundle.serializer.ToSerializableType(node.type), this.bundle.serializer.ToSerializableResource(node.resource), config));
-                        node.UpdateHash();
-                    }
-                }
-            }
-            // Delete scheduled Resources and send Delete Request
-            foreach (string resourceName in resourcesToDelete)
-            {
-                this.bundle.resourceStore.Remove(resourceName);
-                this.bundle.connection.SendRequest(Request.DeleteResource(resourceName, config));
-            }
-        }
-
-        struct HierarchyUpdate
-        {
-            public ObjectNode node;
-            public string parent;
-
-            /// <summary>
-            /// Describes a changed parent for a GameObject
-            /// </summary>
-            /// <param name="node">ObjectNode</param>
-            /// <param name="parent">The name of the new parent GameObject</param>
-            public HierarchyUpdate(ObjectNode node, string parent)
-            {
-                this.node = node;
-                this.parent = parent;
             }
         }
     }

@@ -4,7 +4,8 @@
  *
  * @file Request.cs
  * @author Uwe Gruenefeld, Tobias Lunte
- * @version 2020-04-30
+ * @version 2020-05-05
+ *
  **/
 using System;
 using System.Collections.Generic;
@@ -13,11 +14,13 @@ using UnityEngine;
 namespace UnityNetworkModel
 {
     /// <summary>
-    /// Request for changes to Ressources, GameObjects and Components to be sent between Client and Server
+    /// Request for changes to Objects, Components and Resources to be sent between Client and Server
     /// </summary>
     [Serializable]
     internal class Request : ISerializationCallbackReceiver
     {
+        private Injector injector;
+
         // Types of request
         public const string RESOURCE = "r";
         public const string OBJECT = "o";
@@ -58,111 +61,117 @@ namespace UnityNetworkModel
         /// <summary>
         /// Common constructor used by static Request-generating methdos
         /// </summary>
+        /// <param name="injector"></param>
         /// <param name="messageType"></param>
         /// <param name="updateType"></param>
         /// <param name="name"></param>
-        /// <param name="config"></param>
-        private Request(string messageType, string updateType, string name, NetworkModel config)
+        private Request(Injector injector, string messageType, string updateType, string name)
         {
+            this.injector = injector;
             this.messageType = messageType;
             this.updateType = updateType;
             this.name = name;
-            this.channel = config.SENDCHANNEL.Trim();
+
+            this.channel = "";
             this.iteration = 0;
 
-            if (config.TIMESTAMP)
-            {
+            this.RefreshTimestamp();
+        }
+
+        /// <summary>
+        /// Refreshes current timestamp
+        /// </summary>
+        internal void RefreshTimestamp()
+        {
+            if (injector.configuration.TIME)
                 this.timestamp = DateTime.Now.ToUniversalTime().ToBinary();
-            }
             else
-            {
                 this.timestamp = 0;
-            }
-        }
-
-        /// <summary>
-        /// Create Request to update a specific Resource
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="resourceType"></param>
-        /// <param name="resource"></param>
-        /// <param name="config"></param>
-        /// <returns>Request</returns>
-        internal static Request UpdateResource(string name, Type resourceType, AbstractResource resource, NetworkModel config)
-        {
-            Request req = new Request(Request.RESOURCE, Request.UPDATE, name, config);
-            req.resource = resource;
-            req.resourceType = resourceType;
-            return req;
-        }
-
-        /// <summary>
-        /// Create Request to delete a specific Resource
-        /// </summary>
-        /// <param name="name"></param>
-        /// <param name="config"></param>
-        /// <returns>Request</returns>
-        internal static Request DeleteResource(string name, NetworkModel config)
-        {
-            Request req = new Request(Request.RESOURCE, Request.DELETE, name, config);
-            return req;
         }
 
         /// <summary>
         /// Create Request to update specific GameObject
         /// </summary>
-        /// <param name="go"></param>
-        /// <param name="config"></param>
+        /// <param name="injector"></param>
+        /// <param name="gameObject"></param>
         /// <returns>Request</returns>
-        internal static Request UpdateObject(GameObject gameObject, NetworkModel config)
+        internal static Request UpdateObject(Injector injector, GameObject gameObject)
         {
-            Request req = new Request(Request.OBJECT, Request.UPDATE, gameObject.name, config);
-            req.parent = gameObject.transform.parent.name;
-            if (req.parent == config.gameObject.name)
-            {
-                req.parent = "root";
-            }
-            return req;
+            Request request = new Request(injector, Request.OBJECT, Request.UPDATE, gameObject.name);
+            request.parent = gameObject.transform.parent.name;
+
+            // If the Parent GameObject is the GameObject with the NetworkModel Configuration attached, then assign the Alias Name of the root GameObject
+            if (request.parent == injector.configuration.gameObject.name)
+                request.parent = Model.ROOT_NAME;
+            
+            return request;
         }
 
         /// <summary>
         /// Create Request to delete specific GameObject
         /// </summary>
+        /// <param name="injector"></param>
         /// <param name="name"></param>
-        /// <param name="config"></param>
         /// <returns>Request</returns>
-        public static Request DeleteObject(string name, NetworkModel config)
+        internal static Request DeleteObject(Injector injector, string name)
         {
-            Request req = new Request(Request.OBJECT, Request.DELETE, name, config);
-            return req;
+            return new Request(injector, Request.OBJECT, Request.DELETE, name);
+        }
+
+
+        /// <summary>
+        /// Create Request to update a specific Resource
+        /// </summary>
+        /// <param name="injector"></param>
+        /// <param name="name"></param>
+        /// <param name="resourceType"></param>
+        /// <param name="resource"></param>
+        /// <returns>Request</returns>
+        internal static Request UpdateResource(Injector injector, string name, Type resourceType, AbstractResource resource)
+        {
+            Request request = new Request(injector, Request.RESOURCE, Request.UPDATE, name);
+            request.resource = resource;
+            request.resourceType = resourceType;
+            return request;
+        }
+
+        /// <summary>
+        /// Create Request to delete a specific Resource
+        /// </summary>
+        /// <param name="injector"></param>
+        /// <param name="name"></param>
+        /// <returns>Request</returns>
+        internal static Request DeleteResource(Injector injector, string name)
+        {
+            return new Request(injector, Request.RESOURCE, Request.DELETE, name);
         }
 
         /// <summary>
         /// Create Request to update a List of Components belonging to a specific GameObject
         /// </summary>
+        /// <param name="injector"></param>
         /// <param name="name"></param>
-        /// <param name="comps"></param>
-        /// <param name="config"></param>
+        /// <param name="components"></param>
         /// <returns>Request</returns>
-        public static Request UpdateComponents(string name, List<AbstractComponent> comps, NetworkModel config)
+        internal static Request UpdateComponents(Injector injector, string name, List<AbstractComponent> components)
         {
-            Request req = new Request(Request.COMPONENT, Request.UPDATE, name, config);
-            req.components = comps;
-            return req;
+            Request request = new Request(injector, Request.COMPONENT, Request.UPDATE, name);
+            request.components = components;
+            return request;
         }
 
         /// <summary>
         /// Create Request to delete a List of Components belonging to a specific GameObject
         /// </summary>
+        /// <param name="injector"></param>
         /// <param name="name"></param>
         /// <param name="types"></param>
-        /// <param name="config"></param>
         /// <returns>Request</returns>
-        public static Request DeleteComponents(string name, List<Type> types, NetworkModel config)
+        internal static Request DeleteComponents(Injector injector, string name, List<Type> types)
         {
-            Request req = new Request(Request.COMPONENT, Request.DELETE, name, config);
-            req.componentTypes = types;
-            return req;
+            Request request = new Request(injector, Request.COMPONENT, Request.DELETE, name);
+            request.componentTypes = types;
+            return request;
         }
 
         /// <summary>
@@ -199,9 +208,13 @@ namespace UnityNetworkModel
             }
         }
 
+        /// <summary>
+        /// Encodes a String representing a NetworkModel class into a string representing a UnityEngine class
+        /// </summary>
+        /// <param name="name"></param>
         private String EncodeClass(String name)
         {
-            return name.Replace("UnityNetworkModel.", "").Replace("Clone", "");
+            return name.Replace("UnityNetworkModel.", "").Replace("Serializable", "");
         }
 
         /// <summary>
@@ -238,9 +251,13 @@ namespace UnityNetworkModel
             }
         }
 
+        /// <summary>
+        /// Encodes a String representing a UnityEngine class into a string representing a NetworkModel class
+        /// </summary>
+        /// <param name="name"></param>
         private String DecodeClass(String name)
         {
-            return "UnityNetworkModel." + name + "Clone";
+            return "UnityNetworkModel." + name + "Serializable";
         }
     }
 }

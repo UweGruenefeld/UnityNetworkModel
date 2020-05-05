@@ -4,7 +4,8 @@
  *
  * @file ResourceStore.cs
  * @author Tobias Lunte, Uwe Gruenefeld
- * @version 2020-04-30
+ * @version 2020-05-05
+ *
  **/
 using System;
 using System.Collections.Specialized;
@@ -15,15 +16,17 @@ namespace UnityNetworkModel
     /// <summary>
     /// Collects all known Resources and tracks their last known state.
     /// </summary>
-    internal class ResourceStore : OrderedDictionary/*<string, AssetStore.AssetNode>*/
+    internal class ResourceStore : OrderedDictionary
     {
-        private NetworkModel config;
-        private Bundle bundle;
+        private Injector injector;
 
-        public ResourceStore(NetworkModel config, Bundle bundle)
+        /// <summary>
+        /// Create a new ResourceStore
+        /// </summary>
+        /// <param name="injector"></param>
+        internal ResourceStore(Injector injector)
         {
-            this.config = config;
-            this.bundle = bundle;
+            this.injector = injector;
         }
 
         /// <summary>
@@ -42,13 +45,13 @@ namespace UnityNetworkModel
         /// <param name="resource"></param>
         internal void Add(string name, UnityEngine.Object ressource)
         {
-            this.Add(name, new ResourceNode(ressource, name, this.bundle.serializer));
+            this.Add(name, new ResourceNode(this.injector, ressource, name));
         }
 
         /// <summary>
         /// Tries to find a Resource of correct name and type by priority
         /// 1) A matching tracked Resource from the store.
-        /// 2) A matching Resource of the correct type from the Resources folder (if using existing assets is enabled).
+        /// 2) A matching Resource of the correct type from the Resources folder (if using existing resources is enabled).
         /// </summary>
         /// <param name="resourceName"></param>
         /// <param name="type"></param>
@@ -56,48 +59,60 @@ namespace UnityNetworkModel
         /// <returns>Returns true if a matching Resource was found.</returns>
         internal bool TryGet(string resourceName, Type type, out ResourceNode node)
         {
+            // Check if ResourceStore contains Resource with name
             if (this.Contains(resourceName))
             {
-                ResourceNode tmp = (ResourceNode)this[resourceName];
-                if (tmp.resource != null && tmp.resource.GetType() == type)
+                // Get ResourceNode for resource with name
+                ResourceNode resource = (ResourceNode)this[resourceName];
+
+                // Check if ResourceNode is of the correct type
+                if (resource.resource != null && resource.resource.GetType() == type)
                 {
-                    node = tmp;
+                    node = resource;
                     return true;
                 }
             }
-            if (config.EXISTINGRESOURCES)
+
+            // Should exisitng resources be preferred
+            if (this.injector.configuration.EXISTINGRESOURCES)
             {
+                // Try to load exsting resource
                 UnityEngine.Object resource = Resources.Load("NetworkModel/" + resourceName, type);
+
+                // Check if loading of resource failed
                 if (resource != null)
                 {
-                    node = new ResourceNode(resource, resourceName, this.bundle.serializer);
+                    // Create a new ResourceNode
+                    node = new ResourceNode(this.injector, resource, resourceName);
                     Add(resourceName, node);
                     return true;
                 }
             }
 
+            // No ResourceNode found
             node = null;
             return false;
         }
 
         /// <summary>
-        /// Determine name that a Asset should be stored under in the store. Will return current storage name if Asset is already present or new free name if not. 
-        /// Asset's name should be set to returned name if it is to be stored.
+        /// Determine name that a Resource should be stored under in the store. Will return current storage name if Resource is already present or new free name if not. 
+        /// Resource's name should be set to returned name if it is to be stored.
         /// </summary>
-        /// <param name="asset"></param>
-        /// <returns>Name the Asset should be stored under</returns>
+        /// <param name="resource"></param>
+        /// <returns>Name the Resource should be stored under</returns>
         internal string GetReferenceName(UnityEngine.Object resource)
         {
+            // Check if resource is null
             if (resource == null)
-            {
                 return "null";
-            }
-            string refName = resource.name;
-            while (this.Contains(refName) && ((ResourceNode)this[refName]).resource.GetInstanceID() != resource.GetInstanceID())
-            {
-                refName = refName + "_" + resource.GetInstanceID().ToString();
-            }
-            return refName;
+            
+            // Find the name of the Resource
+            string referenceName = resource.name;
+            while (this.Contains(referenceName) && ((ResourceNode)this[referenceName]).resource.GetInstanceID() != resource.GetInstanceID())
+                referenceName = referenceName + "_" + resource.GetInstanceID().ToString();
+            
+            // Return the Resource name
+            return referenceName;
         }
     }
 
