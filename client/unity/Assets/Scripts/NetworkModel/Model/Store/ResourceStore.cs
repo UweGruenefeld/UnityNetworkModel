@@ -33,9 +33,11 @@ namespace UnityNetworkModel
         /// Adds Resource to store
         /// </summary>
         /// <param name="resource"></param>
-        internal void Add(UnityEngine.Object resource)
+        internal ResourceNode Add(UnityEngine.Object resource)
         {
-            this.Add(resource.name, resource);
+            ResourceNode node = new ResourceNode(this.injector, resource, resource.name);
+            this.Add(resource.name, node);
+            return node;
         }
 
         /// <summary>
@@ -43,9 +45,12 @@ namespace UnityNetworkModel
         /// </summary>
         /// <param name="name"></param>
         /// <param name="resource"></param>
-        internal void Add(string name, UnityEngine.Object ressource)
+        /// <returns></returns>
+        internal ResourceNode Add(string name, UnityEngine.Object resource)
         {
-            this.Add(name, new ResourceNode(this.injector, ressource, name));
+            ResourceNode node = new ResourceNode(this.injector, resource, name);
+            this.Add(name, node);
+            return node;
         }
 
         /// <summary>
@@ -73,7 +78,7 @@ namespace UnityNetworkModel
                 }
             }
 
-            // Should exisitng resources be preferred
+            // Should existing resources be preferred
             if (this.injector.configuration.EXISTINGRESOURCES)
             {
                 // Try to load exsting resource

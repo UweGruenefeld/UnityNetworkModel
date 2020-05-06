@@ -122,17 +122,17 @@ function onText(connection, message)
 			case CHANNEL_LEAVE:
 				valid = handleMessageChannelLeave(connection, json);
 				break;
-			case RESOURCE_UPDATE:
-				valid = handleMessageRessourceUpdate(connection, json);
-				break;
-			case RESOURCE_DELETE:
-				valid = handleMessageRessourceDelete(connection, json);
-				break;
 			case OBJECT_UPDATE:
 				valid = handleMessageObjectUpdate(connection, json);
 				break;
 			case OBJECT_DELETE:
 				valid = handleMessageObjectDelete(connection, json);
+				break;
+			case RESOURCE_UPDATE:
+				valid = handleMessageRessourceUpdate(connection, json);
+				break;
+			case RESOURCE_DELETE:
+				valid = handleMessageRessourceDelete(connection, json);
 				break;
 			case COMPONENT_UPDATE:
 				valid = handleMessageComponentUpdate(connection, json);
@@ -140,6 +140,7 @@ function onText(connection, message)
 			case COMPONENT_DELETE:
 				valid = handleMessageComponentDelete(connection, json);
 				break;
+
 			default:
 				// Not supported message type
 				log(connection, 'warning', 'Message is dropped because it uses an unsupported type');
@@ -155,7 +156,7 @@ function onText(connection, message)
 				var isMessageSend = false;
 				subscriptions[json.channel].forEach(function(socket) 
 				{
-					if(socket !== connection && socket.readyState === websocket.OPEN)
+					if(socket !== connection && socket.readyState === socket.OPEN)
 					{
 						try 
 						{
@@ -273,50 +274,6 @@ function handleMessageChannelLeave(connection, json)
 	return true;
 }
 
-// Handle message for ressource update
-function handleMessageRessourceUpdate(connection, json)
-{
-	// Check if request is valid
-	if(json.hasOwnProperty('string1') && json.hasOwnProperty('string2') &&
-		validateRessourceTimestamp(json.channel, json.name, json.timestamp))
-	{
-		// Does the ressource already exist
-		if(!ressources[json.channel].hasOwnProperty(json.name))
-			ressources[json.channel][json.name] = {};
-
-		// Update the ressource
-		ressources[json.channel][json.name]['timestamp'] = json.timestamp;
-		ressources[json.channel][json.name]['ressourceType'] = json.string1;
-		ressources[json.channel][json.name]['ressource'] = [JSON.stringify(json.string2[0])];
-
-		// Log ressource update
-		log(connection, 'ressource update', 'Updated ressource ' + json.name);
-
-		// Successful
-		return true;
-	}
-	return false;
-}
-
-// Handle message for resource delete
-function handleMessageRessourceDelete(connection, json)
-{
-	// Check if request is valid
-	if(ressources[json.channel].hasOwnProperty(json.name) && 
-		validateRessourceTimestamp(json.channel, json.name, json.timestamp))
-	{
-		// Remove the assest
-		delete ressources[json.channel][json.name];
-		
-		// Log ressource delete
-		log(connection, 'ressource delete', 'Removed ressource ' + json.name);
-
-		// Successful
-		return true;
-	}
-	return false;
-}
-
 // Handle message for object update
 function handleMessageObjectUpdate(connection, json)
 {
@@ -356,6 +313,50 @@ function handleMessageObjectDelete(connection, json)
 		
 		// Log object delete
 		log(connection, 'object remove', 'Removed object ' + json.name);
+
+		// Successful
+		return true;
+	}
+	return false;
+}
+
+// Handle message for ressource update
+function handleMessageRessourceUpdate(connection, json)
+{
+	// Check if request is valid
+	if(json.hasOwnProperty('string1') && json.hasOwnProperty('string2') &&
+		validateRessourceTimestamp(json.channel, json.name, json.timestamp))
+	{
+		// Does the ressource already exist
+		if(!ressources[json.channel].hasOwnProperty(json.name))
+			ressources[json.channel][json.name] = {};
+
+		// Update the ressource
+		ressources[json.channel][json.name]['timestamp'] = json.timestamp;
+		ressources[json.channel][json.name]['ressourceType'] = json.string1;
+		ressources[json.channel][json.name]['ressource'] = [JSON.stringify(json.string2[0])];
+
+		// Log ressource update
+		log(connection, 'ressource update', 'Updated ressource ' + json.name);
+
+		// Successful
+		return true;
+	}
+	return false;
+}
+
+// Handle message for resource delete
+function handleMessageRessourceDelete(connection, json)
+{
+	// Check if request is valid
+	if(ressources[json.channel].hasOwnProperty(json.name) && 
+		validateRessourceTimestamp(json.channel, json.name, json.timestamp))
+	{
+		// Remove the assest
+		delete ressources[json.channel][json.name];
+		
+		// Log ressource delete
+		log(connection, 'ressource delete', 'Removed ressource ' + json.name);
 
 		// Successful
 		return true;

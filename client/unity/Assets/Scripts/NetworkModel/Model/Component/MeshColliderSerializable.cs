@@ -31,9 +31,7 @@ namespace UnityNetworkModel
 
             // Check if Mesh is attached to MeshCollider
             if (meshCollider.sharedMesh == null)
-            {
                 this.m = "null";
-            }
             else
             {
                 // If mesh is attached, then get reference or unique name from ResourceStore
@@ -62,16 +60,26 @@ namespace UnityNetworkModel
         /// <returns></returns>
         public override bool Apply(Injector injector, Component component)
         {
+            // Get reference to component
+            MeshCollider meshCollider = (MeshCollider)component;
+
+            // Check if Mesh is null
+            if(this.m == null || this.m == "null")
+            {
+                meshCollider.material = null;
+                meshCollider.sharedMaterial = null;
+                return true;
+            }
+
             // Find resource in Store
             ResourceNode resourceNode;
             if (!injector.resourceStore.TryGet(this.m, typeof(Mesh), out resourceNode))
             {
                 // If resource not found, then Unity component cannot be created
-                // TODO check if really necessary
                 return false;
             }
 
-            MeshCollider meshCollider = (MeshCollider)component;
+            // Apply the Material to the Component
             meshCollider.sharedMesh = (Mesh)resourceNode.resource;
 
             return true;

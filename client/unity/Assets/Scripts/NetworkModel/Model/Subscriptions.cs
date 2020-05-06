@@ -5,6 +5,7 @@
  * @file Subscriptions.cs
  * @author Uwe Gruenefeld
  * @version 2020-05-05
+ *
  **/
 using System.Collections.Generic;
 using UnityEngine;

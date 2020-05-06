@@ -55,10 +55,19 @@ namespace UnityNetworkModel
         /// <param name="type">Type of component to update</param>
         internal void UpdateComponent(Type type)
         {
+            // Get Component from GameObject
             Component component = gameObject.GetComponent(type);
 
-            if (component != null)
-                this.hashes[type] = this.injector.serializer.ToSerializableComponent(component).GetHash();
+            // If no component was found, then return
+            if (component == null)
+                return;
+
+            // Transform UnityEngine Component to NetworkModel AbstractComponent
+            AbstractComponent abstractComponent = this.injector.serializer.ToSerializableComponent(component);
+
+            // If Component does not exist as a serializable Component
+            if(abstractComponent != null)
+                this.hashes[type] = abstractComponent.GetHash();
         }
 
         /// <summary>

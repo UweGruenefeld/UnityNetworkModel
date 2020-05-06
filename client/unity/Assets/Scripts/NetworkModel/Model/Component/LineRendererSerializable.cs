@@ -78,17 +78,9 @@ namespace UnityNetworkModel
         /// <returns></returns>
         public override bool Apply(Injector injector, Component component)
         {
-            // Find resource in Store
-            ResourceNode resourceNode;
-            if (!injector.resourceStore.TryGet(this.m, typeof(Material), out resourceNode))
-            {
-                // If resource not found, then Unity component cannot be created
-                // TODO check if really necessary
-                return false;
-            }
-
+            // Get reference to component
             LineRenderer lineRenderer = (LineRenderer)component;
-            lineRenderer.material = (Material)resourceNode.resource;
+
             lineRenderer.positionCount = this.p.Length;
             lineRenderer.SetPositions(this.p);
             lineRenderer.widthMultiplier = this.w;
@@ -98,6 +90,25 @@ namespace UnityNetworkModel
             lineRenderer.textureMode = this.t;
             lineRenderer.startColor = this.cs;
             lineRenderer.endColor = this.ce;
+
+            // Check if Material is null
+            if(this.m == null || this.m == "null")
+            {
+                lineRenderer.material = null;
+                lineRenderer.sharedMaterial = null;
+                return true;
+            }
+
+            // Find resource in Store
+            ResourceNode resourceNode;
+            if (!injector.resourceStore.TryGet(this.m, typeof(Material), out resourceNode))
+            {
+                // If resource not found, then Unity component cannot be created
+                return false;
+            }
+
+            // Apply the Material to the Component
+            lineRenderer.material = (Material)resourceNode.resource;
 
             return true;
         }

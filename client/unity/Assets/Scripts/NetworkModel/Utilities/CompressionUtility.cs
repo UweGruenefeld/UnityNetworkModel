@@ -30,7 +30,7 @@ namespace UnityNetworkModel
             Color[] result = new Color[value.Length];
 
             for(int i=0; i < value.Length && i < result.Length; i++)
-                result[i] = Compress(places, result[i]);
+                result[i] = Compress(places, value[i]);
 
             return result;
         }
@@ -76,7 +76,7 @@ namespace UnityNetworkModel
             Vector3[] result = new Vector3[value.Length];
 
             for(int i=0; i < value.Length && i < result.Length; i++)
-                result[i] = Compress(places, result[i]);
+                result[i] = Compress(places, value[i]);
 
             return result;
         }
@@ -121,7 +121,7 @@ namespace UnityNetworkModel
             Vector2[] result = new Vector2[value.Length];
 
             for(int i=0; i < value.Length && i < result.Length; i++)
-                result[i] = Compress(places, result[i]);
+                result[i] = Compress(places, value[i]);
 
             return result;
         }
@@ -178,7 +178,7 @@ namespace UnityNetworkModel
 
             // Compress value according to decimal places
             int factor = (int)Math.Pow(10, places);
-            return (float)Math.Truncate(value * factor) / factor;
+            return (float)(Math.Truncate(value * factor) / (float)factor);
         }
     }
 }

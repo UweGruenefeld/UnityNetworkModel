@@ -70,7 +70,7 @@ namespace UnityNetworkModel
                 if (this.connectingAttempt)
                 {
                     this.connectingAttempt = false;
-                    LogUtility.Log(this.injector, LogType.INFORMATION, "Successful connected to server");
+                    LogUtility.Log(this.injector, LogType.INFORMATION, "Successfully connected to server");
                 }
             }
 

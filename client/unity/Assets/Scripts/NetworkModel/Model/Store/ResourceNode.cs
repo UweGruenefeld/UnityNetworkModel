@@ -44,7 +44,7 @@ namespace UnityNetworkModel
         /// </summary>
         internal void UpdateHash()
         {
-            hash = this.injector.serializer.ToSerializableResource(this.resource).GetHash();
+            this.hash = this.injector.serializer.ToSerializableResource(this.resource).GetHash();
         }
     }
 }

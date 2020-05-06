@@ -134,7 +134,7 @@ namespace UnityNetworkModel
             GUILayoutOption[] optionsRightFields = { GUILayout.MaxWidth(65.0f), GUILayout.MinWidth(65.0f), GUILayout.Width(65.0f) };
 
             // Settings
-            this.toggleGroupSettings = EditorGUILayout.BeginFoldoutHeaderGroup(this.toggleGroupConnection, "Settings", foldout);
+            this.toggleGroupSettings = EditorGUILayout.BeginFoldoutHeaderGroup(this.toggleGroupSettings, "Settings", foldout);
             if (this.toggleGroupSettings)
             {
                 EditorGUI.indentLevel++;
@@ -149,18 +149,18 @@ namespace UnityNetworkModel
             EditorGUILayout.Space();
 
             // Channel
-            this.toggleGroupChannel = EditorGUILayout.BeginFoldoutHeaderGroup(this.toggleGroupConnection, "Channel", foldout);
+            this.toggleGroupChannel = EditorGUILayout.BeginFoldoutHeaderGroup(this.toggleGroupChannel, "Channel", foldout);
             if (this.toggleGroupChannel)
             {
                 EditorGUI.indentLevel++;
                 if (EditorApplication.isPlaying)
                 {
-                    EditorGUILayout.TextField(new GUIContent("Send on channel", sendChannel), networkModelConfiguration.SENDCHANNELS, EditorStyles.label);
+                    EditorGUILayout.TextField(new GUIContent("Send on channels", sendChannel), networkModelConfiguration.SENDCHANNELS, EditorStyles.label);
                     EditorGUILayout.TextField(new GUIContent("Receive on channels", receiveChannel), networkModelConfiguration.RECEIVECHANNELS, EditorStyles.label);
                 }
                 else
                 {
-                    networkModelConfiguration.SENDCHANNELS = EditorGUILayout.TextField(new GUIContent("Send on channel", sendChannel), networkModelConfiguration.SENDCHANNELS);
+                    networkModelConfiguration.SENDCHANNELS = EditorGUILayout.TextField(new GUIContent("Send on channels", sendChannel), networkModelConfiguration.SENDCHANNELS);
                     networkModelConfiguration.RECEIVECHANNELS = EditorGUILayout.TextField(new GUIContent("Receive on channels", receiveChannel), networkModelConfiguration.RECEIVECHANNELS);
                 }
                 EditorGUI.indentLevel--;
@@ -217,7 +217,7 @@ namespace UnityNetworkModel
             EditorGUILayout.Space();
 
             // Debugging
-            this.toggleGroupDebugging = EditorGUILayout.BeginFoldoutHeaderGroup(this.toggleGroupConnection, "Debugging", foldout);
+            this.toggleGroupDebugging = EditorGUILayout.BeginFoldoutHeaderGroup(this.toggleGroupDebugging, "Debugging", foldout);
             if (this.toggleGroupDebugging)
             {
                 EditorGUI.indentLevel++;

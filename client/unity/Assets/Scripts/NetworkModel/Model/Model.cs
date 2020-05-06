@@ -20,7 +20,7 @@ namespace UnityNetworkModel
     internal class Model : MonoBehaviour
     {
         internal static string ROOT_NAME = "root";
-        internal static int ATTEMPTS_TO_UPDATE = 5;
+        internal static int ATTEMPTS_TO_UPDATE = 10;
 
         private Injector injector;
 
@@ -63,6 +63,37 @@ namespace UnityNetworkModel
         /// </summary>
         internal void TrackChanges()
         {
+            // Create lists of resources and components that have pending requests
+            List<NameTypePair> blockedResources = new List<NameTypePair>();
+            List<NameTypePair> blockedComponents = new List<NameTypePair>();
+
+            // Check pending requests for components and resources
+            foreach(Request request in requestQueue.ToArray())
+            {
+                switch(request.messageType)
+                {
+                    // Check if request is pending for resource
+                    case Request.RESOURCE:
+                        if(request.resource != null)
+                            blockedResources.Add(new NameTypePair(request.name, request.resource.commonType));
+                        else if(request.resourceType != null)
+                            blockedResources.Add(new NameTypePair(request.name, request.resourceType));
+                        break;
+
+                    // Check if request is pending for component
+                    case Request.COMPONENT:
+                        if(request.components != null)
+                            // Component requests can contain multiple components
+                            foreach(AbstractComponent component in request.components)
+                                blockedComponents.Add(new NameTypePair(request.name, component.commonType));
+                        else if(request.componentTypes != null)
+                            // Component requests can contain multiple components
+                            foreach(Type type in request.componentTypes)
+                                blockedComponents.Add(new NameTypePair(request.name, type));
+                        break;
+                }
+            }
+
             // Add untracked GameObjects to ObjectStore as Objects without Components
             foreach (Transform transform in this.gameObject.GetComponentsInChildren<Transform>())
             {
@@ -122,6 +153,13 @@ namespace UnityNetworkModel
                     // Iterate over tracked components of the node
                     foreach (KeyValuePair<Type, long> hashEntry in node.hashes)
                     {
+                        // If component is blocked from tracking changes, then continue with next component
+                        if(blockedComponents.Contains(new NameTypePair(node.gameObject.name, hashEntry.Key)))
+                        {
+                            LogUtility.Log(this.injector, LogType.INFORMATION, "Component " + hashEntry.Key + " update blocked");
+                            continue;
+                        }
+
                         // Get the component which is pointed at in this loop
                         Component component = node.gameObject.GetComponent(hashEntry.Key);
 
@@ -144,6 +182,10 @@ namespace UnityNetworkModel
 
                         // Transform UnityEngine Component to NetworkModel AbstractComponent
                         AbstractComponent serializedComponent = this.injector.serializer.ToSerializableComponent(component);
+
+                        // If Component does not exist as a serializable Component
+                        if(serializedComponent == null)
+                            continue;
 
                         // Generate hash of component and compare it to the previously stored value; if not equal, then add it to update list
                         if (serializedComponent.GetHash() != hashEntry.Value)
@@ -173,8 +215,6 @@ namespace UnityNetworkModel
                     if (sendUpdatedComponents.Count > 0)
                     {
                         this.injector.connection.SendRequest(Request.UpdateComponents(this.injector, referenceName, sendUpdatedComponents));
-
-                        //TODO figure out what next line does
                         node.gameObject.transform.hasChanged = false;
                     }
                 }
@@ -189,7 +229,7 @@ namespace UnityNetworkModel
 
             // List of Resources that have been deleted on this client
             List<string> resourcesToDelete = new List<string>();
-
+            
             // Iterate over Resource Store
             for (int i = 0; i < this.injector.resourceStore.Count; i++)
             {
@@ -200,6 +240,13 @@ namespace UnityNetworkModel
                 // If resource name is null, then check next resource
                 if (resourceName == "null")
                     continue;
+
+                // If resource is blocked from tracking changes, then continue with next resource
+                if(blockedResources.Contains(new NameTypePair(resourceName, node.type)))
+                {
+                    LogUtility.Log(this.injector, LogType.INFORMATION, "Resource " + node.type + " update blocked");
+                    continue;
+                }
 
                 // If resource is allowed to send, then track changes
                 bool send = RuleUtility.FindResourceRule(this.injector, node.type, UpdateType.SEND);
@@ -338,31 +385,40 @@ namespace UnityNetworkModel
             {
                 // If Resource exists, try to apply updates. If successful, request is fulfilled.
                 if (request.resource.Apply(this.injector, node.resource))
+                {
+                    node.UpdateHash();
+                    LogUtility.Log(this.injector, LogType.INFORMATION, "Resource update sucessful");
                     return;
+                }
             }
             else
             {
-                // If Resource doesn't exist, create it and try to apply updates. If successful, request is fulfilled.
+                // If Resource does not exist, create it 
                 UnityEngine.Object resource = request.resource.Construct();
+                resource.name = request.name;
+
+                // Try to apply updates; if successful, request is fulfilled
                 if (request.resource.Apply(this.injector, resource))
                 {
-                    resource.name = request.name;
-                    this.injector.resourceStore.Add(resource);
+                    node = this.injector.resourceStore.Add(request.name, resource);
+                    node.UpdateHash();
+                    LogUtility.Log(this.injector, LogType.INFORMATION, "Resource " + commonType + " update sucessful");
                     return;
                 }
             }
 
             // Resource creation was not successful in this update
-
-            // If this request was handled less than five times, then try in an later update loop
+            
+            // If this request was handled less times than allowed, then try in an later update loop
             if (request.iteration < Model.ATTEMPTS_TO_UPDATE)
             {
                 request.iteration++;
                 nextRequestQueue.Enqueue(request);
+                LogUtility.Log(this.injector, LogType.INFORMATION, "Resource  " + commonType + " update unsucessful because of missing references");
             }
             // Else, report failed resource update
             else
-                LogUtility.Log(this.injector, LogType.WARNING, "Missing resource update needed for " + request.name);
+                LogUtility.Log(this.injector, LogType.WARNING, "Request to update resource " + commonType + " for " + request.name + " dropped");
         }
 
         /// <summary>
@@ -395,7 +451,10 @@ namespace UnityNetworkModel
             // Update the components
             foreach (AbstractComponent serializedComponent in request.components)
             {
+                // Get component type
                 Type type = this.injector.serializer.GetCommonType(serializedComponent);
+
+                // Check if type is not null
                 if (type != null)
                 {
                     // If component is not allowed to receive update, then drop request
@@ -409,24 +468,27 @@ namespace UnityNetworkModel
                     if (serializedComponent.Apply(this.injector, component))
                     {
                         node.UpdateComponent(type);
+                        LogUtility.Log(this.injector, LogType.INFORMATION, "Component " + type + " update sucessful");
                         continue;
                     }
 
-                    // Component creation was not successful in this update
-
+                    // Component creation could not add values in this update
+                    
                     // Create Request to try in a later update
                     Request newRequest = Request.UpdateComponents(this.injector, request.name, new List<AbstractComponent>() { serializedComponent });
+                    newRequest.channel = request.channel; // Save channel information
 
-                    // If this request was handled less than five times, then try in an later update loop
-                    if (newRequest.iteration < Model.ATTEMPTS_TO_UPDATE)
+                    // If this request was handled less times than allowed, then try in an later update loop
+                    if (request.iteration < Model.ATTEMPTS_TO_UPDATE)
                     {
                         // Integrate the iterations of the old request
                         newRequest.iteration = request.iteration + 1;
                         nextRequestQueue.Enqueue(newRequest);
+                        LogUtility.Log(this.injector, LogType.INFORMATION, "Component " + type + " update unsucessful because missing references");
                     }
                     // Else, report failed resource update
                     else
-                        LogUtility.Log(this.injector, LogType.WARNING, "Missing component update needed for " + request.name);
+                        LogUtility.Log(this.injector, LogType.WARNING, "Request to update component " + type + " for " + request.name + " dropped");
                 }
             }
         }

@@ -30,9 +30,7 @@ namespace UnityNetworkModel
             // Check if Mesh is attached to MeshFilter
             MeshRenderer meshRenderer = (MeshRenderer)component;
             if (meshRenderer.sharedMaterial == null)
-            {
                 this.m = "null";
-            }
             else
             {
                 // If mesh is attached, then get reference or unique name from ResourceStore
@@ -61,16 +59,26 @@ namespace UnityNetworkModel
         /// <returns></returns>
         public override bool Apply(Injector injector, Component component)
         {
+            // Get reference to component
+            MeshRenderer meshRenderer = (MeshRenderer)component;
+
+            // Check if Material is null
+            if(this.m == null || this.m == "null")
+            {
+                meshRenderer.material = null;
+                meshRenderer.sharedMaterial = null;
+                return true;
+            }
+            
             // Find resource in Store
             ResourceNode resourceNode;
             if (!injector.resourceStore.TryGet(this.m, typeof(Material), out resourceNode))
             {
                 // If resource not found, then Unity component cannot be created
-                // TODO check if really necessary
                 return false;
             }
 
-            MeshRenderer meshRenderer = (MeshRenderer)component;
+            // Apply the Material to the Component
             meshRenderer.material = (Material)resourceNode.resource;
 
             return true;

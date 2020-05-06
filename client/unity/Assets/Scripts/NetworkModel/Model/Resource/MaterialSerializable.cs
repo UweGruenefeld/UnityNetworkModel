@@ -31,19 +31,11 @@ namespace UnityNetworkModel
 
             // Check if Color attribute exists
             if (material.HasProperty("_Color"))
-            {
                 this.c = material.color;
-            }
-            this.o = CompressionUtility.Compress(this.injector.configuration.gameObject, material.mainTextureOffset);
-            this.s = CompressionUtility.Compress(this.injector.configuration.gameObject, material.mainTextureScale);
-            this.n = material.shader.name;
-            this.k = material.shaderKeywords;
 
             // Save the used Main Texture
-            if (material.mainTexture == null)
-            {
+            if (!material.HasProperty("_MainTex") || material.mainTexture == null)
                 this.t = "null";
-            }
             else
             {
                 // Get reference or unique name for the material resource
@@ -53,9 +45,20 @@ namespace UnityNetworkModel
                 if (!injector.resourceStore.Contains(material.mainTexture.name))
                     injector.resourceStore.Add(material.mainTexture);
 
-                // Store the new Material name
+                // Store the Texture name
                 this.t = material.mainTexture.name;
             }
+
+            // Check if TextureOffset attribute exists
+            if(material.HasProperty("_TextureOffset"))
+                this.o = CompressionUtility.Compress(this.injector.configuration.gameObject, material.mainTextureOffset);
+
+            // Check if TextureScale exists
+            if(material.HasProperty("_TextureScale"))
+                this.s = CompressionUtility.Compress(this.injector.configuration.gameObject, material.mainTextureScale);
+
+            this.n = material.shader.name;
+            this.k = material.shaderKeywords;
         }
 
         /// <summary>
@@ -72,24 +75,14 @@ namespace UnityNetworkModel
         /// <returns></returns>
         public override bool Apply(Injector injector, UnityEngine.Object resource)
         {
-            // Find resource in Store
+            Material material = (Material)resource;
+
+            // Find Texture2D resource in Store
             ResourceNode node = null;
             if (this.t != "null" && !injector.resourceStore.TryGet(this.t, typeof(Texture2D), out node))
             {
-                // If resource not found, then Unity component cannot be created
-                // TODO check if really necessary
+                // If Texture2D resource that belongs to this Material is not found, then Unity component cannot be created
                 return false;
-            }
-
-            // Apply Material
-            Material material = (Material)resource;
-
-            // Apply shader values
-            Shader shader = Shader.Find(this.n);
-            if (shader != null)
-            {
-                material.shader = shader;
-                material.shaderKeywords = this.k;
             }
 
             // Apply Material color
@@ -106,6 +99,14 @@ namespace UnityNetworkModel
                 material.mainTexture = (Texture2D)node.resource;
             }
 
+            // Apply shader values
+            Shader shader = Shader.Find(this.n);
+            if (shader != null)
+            {
+                material.shader = shader;
+                material.shaderKeywords = this.k;
+            }
+            
             return true;
         }
 

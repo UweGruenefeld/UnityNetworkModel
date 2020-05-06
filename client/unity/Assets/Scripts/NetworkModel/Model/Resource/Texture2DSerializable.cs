@@ -29,7 +29,12 @@ namespace UnityNetworkModel
 
             this.w = texture.width;
             this.h = texture.height;
-            this.p = CompressionUtility.Compress(this.injector.configuration.gameObject, texture.GetPixels());
+
+            try
+            {
+                this.p = CompressionUtility.Compress(this.injector.configuration.gameObject, texture.GetPixels());
+            }
+            catch(Exception) {}
         }
 
         /// <summary>
@@ -48,8 +53,12 @@ namespace UnityNetworkModel
         {
             Texture2D texture = (Texture2D)resource;
 
-            texture.SetPixels(this.p);
-            texture.Apply();
+            if(this.p != null && this.p.Length > 0)
+            {
+                texture.SetPixels(this.p);
+                texture.Apply();
+            }
+
             return true;
         }
 
@@ -74,8 +83,9 @@ namespace UnityNetworkModel
                 this.h.GetHashCode()
             );
 
-            foreach (Color color in this.p)
-                hash = HashUtility.Combine2Hashes(hash, color.GetHashCode());
+            if(this.p != null)
+                foreach (Color color in this.p)
+                    hash = HashUtility.Combine2Hashes(hash, color.GetHashCode());
             
             return hash;
         }

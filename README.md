@@ -1,9 +1,12 @@
 # Unity Network Model
-Package for Unity3D, which allows to synchronize GameObjects, Components and Resources with multiple Unity clients over websockets. On the server side, a NodeJS script opens a websocket connection, stores the incoming GameObjects, Components and Resources as JSON objects and sends updates to the Unity clients to keep them sync.
+Package for Unity3D, which allows synchronizing GameObjects, Resources, and Components with multiple Unity clients over WebSockets. On the server-side, a NodeJS script opens a WebSocket connection, stores the incoming GameObjects, Resources, and Components as JSON objects and sends updates to the Unity clients to keep them sync.
 
 > Ideal for beginners, to synchronize multiple Unity clients without any knowledge
 > about network programming. Perfect as well, to rapidly prototype
 > multi-user experiences with a large number of supported devices.
+
+[![Demonstration of Unity Network Model](http://img.youtube.com/vi/fQcbDtgZxLE/0.jpg)](http://www.youtube.com/watch?v=fQcbDtgZxLE)
+*Demonstration of Unity Network Model*
 
 ## Features
 * Bidirectional updates between Unity client and NodeJS server
@@ -52,9 +55,6 @@ node server.js
 
 -----
 ## Screenshots
-
-![Unity GUI with imported UnityNetworkModel Package](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/showcase/unity-gui.jpg?raw=true)
-*Unity GUI with imported UnityNetworkModel Package*
 
 ![UnityNetworkModel Configuration Component](https://github.com/UweGruenefeld/UnityNetworkModel/blob/master/showcase/unity-config.jpg?raw=true)
 *UnityNetworkModel Configuration Component*

@@ -9,7 +9,7 @@
  **/
 namespace UnityNetworkModel
 {
-    struct HierarchyUpdate
+    internal struct HierarchyUpdate
     {
         public ObjectNode node;
         public string parent;
@@ -19,7 +19,7 @@ namespace UnityNetworkModel
         /// </summary>
         /// <param name="node">ObjectNode</param>
         /// <param name="parent">The name of the new parent GameObject</param>
-        public HierarchyUpdate(ObjectNode node, string parent)
+        internal HierarchyUpdate(ObjectNode node, string parent)
         {
             this.node = node;
             this.parent = parent;

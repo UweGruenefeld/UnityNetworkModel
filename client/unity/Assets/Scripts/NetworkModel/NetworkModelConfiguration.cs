@@ -25,6 +25,7 @@
  * @file NetworkModel.cs
  * @author Uwe Gruenefeld, Tobias Lunte
  * @version 2020-05-04
+ *
  **/
 using System.Collections;
 using UnityEngine;
@@ -45,11 +46,11 @@ namespace UnityNetworkModel
         public float DELAY = 0.1f;
 
         // Settings
-        public bool TIME = false; 
+        public bool TIME = false;
         public bool SEND = true;
         public bool RECEIVE = true;
         public bool EXISTINGOBJECTS = false;
-        public bool EXISTINGRESOURCES = false;        
+        public bool EXISTINGRESOURCES = false;
 
         // Channel
         public string SENDCHANNELS = "default";     // Cannot be changed during runtime
@@ -68,7 +69,7 @@ namespace UnityNetworkModel
         public bool receiveMesh = true;
 
         // Texture2D
-        public bool enableTexture2D  = true;
+        public bool enableTexture2D = true;
         public bool sendTexture2D = true;
         public bool receiveTexture2D = true;
 
@@ -111,7 +112,7 @@ namespace UnityNetworkModel
 
             // Handles subscriptions
             this.injector.subscriptions = new Subscriptions(this.injector);
-            
+
 
             // Initialize variables for coroutines
             this.numberOfCoroutines = 0;
@@ -124,7 +125,7 @@ namespace UnityNetworkModel
         void Update()
         {
             // Start synchronization coroutine
-            if(!this.isCoroutineRunning)
+            if (!this.isCoroutineRunning)
                 StartCoroutine(Synchronize());
         }
 
@@ -141,7 +142,7 @@ namespace UnityNetworkModel
             if (this.injector.connection.EnsureIsAlive())
             {
                 // If subscriptions are not initialized, then initialize them
-                if(!this.injector.subscriptions.isInitialized)
+                if (!this.injector.subscriptions.isInitialized)
                     this.injector.subscriptions.Initialize();
 
                 // Subscribe and unsubscribe from receiving updates on channel
@@ -170,6 +171,22 @@ namespace UnityNetworkModel
 
             // Finish coroutine
             yield return null;
+        }
+
+        /// <summary>
+        /// OnDestory method from MonoBehaviour
+        /// </summary>
+        void OnDestroy()
+        {
+            // Close websocket connection
+            if (this.injector != null)
+            {
+                Connection connection = this.injector.connection;
+                if (connection != null)
+                    connection.CloseAsync();
+            }
+
+            LogUtility.Log(this.injector, LogType.INFORMATION, "Successfully disconnected from server");
         }
     }
 }
