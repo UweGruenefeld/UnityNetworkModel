@@ -6,6 +6,7 @@ Package for Unity3D, which allows synchronizing GameObjects, Resources, and Comp
 > multi-user experiences with a large number of supported devices.
 
 [![Demonstration of Unity Network Model](http://img.youtube.com/vi/fQcbDtgZxLE/0.jpg)](http://www.youtube.com/watch?v=fQcbDtgZxLE)
+
 *Demonstration of Unity Network Model*
 
 ## Features
